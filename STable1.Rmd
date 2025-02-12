@@ -446,5 +446,5 @@ all_summaries$subset <- sub("T6_Fungi", "T6_Eukarya-Fungi",
                                     all_summaries$subset)))
 
 # Export
-write.xlsx(all_summaries, "../results/supp_tables/feature_summary.csv", row.names = FALSE)
+write.xlsx(all_summaries, "../results/supp_tables/feature_summary.xlsx", row.names = FALSE)
 ```
