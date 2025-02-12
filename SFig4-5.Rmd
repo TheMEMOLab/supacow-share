@@ -1,0 +1,602 @@
+---
+title: "| Extended Data Fig 4 + 5 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("Hmisc")
+library("gtools")
+library("gridExtra")
+library("cowplot")
+library("reshape2")
+library("data.table")
+library("ComplexHeatmap")
+library("circlize")
+library("RColorBrewer")
+library("ggpubr")
+library("DESeq2")
+library("openxlsx")
+
+source("fig_functions.R")
+```
+
+```{r metadata_setup}
+# Metadata setup
+sc_meta_full <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                           sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+# Trim to selected 24 + add row names reflecting T6 digesta samples
+sc_meta_24_T6 <- subset(sc_meta_full, chosen_24 == TRUE)
+rownames(sc_meta_24_T6) <- paste0("D",
+                                  ifelse(nchar(sc_meta_24_T6$animal) == 2,
+                                         sc_meta_24_T6$animal,
+                                         paste0("0", sc_meta_24_T6$animal)), "T6")
+```
+
+This script builds on results exported from `Fig2.Rmd` (PCAs) and `Fig3.Rmd` (differential abundance), so those must have been run before executing this file (alternatively, the results are also available as supplementary tables in the manuscript).
+
+# SFig 5
+
+## MT
+
+Data is set up separately for ciliates and bacteria+archaea for downstream use.
+
+```{r mt_data_import}
+# Read in annotated data
+metat_annot <- fread("../data/transcriptomics/MetaT.RawCounts.Annotated.zerotrim.csv",
+                    data.table = FALSE)
+```
+
+Set up ciliate data:
+
+```{r mt_data_cil}
+# Subset data to ciliates
+sag_metat <- subset(metat_annot, Kingdom == "Protozoa")
+
+# Fix one name that's inconsistent across tables
+sag_metat$sample <- sub("YL", "YL-", sag_metat$sample)
+
+# Simplified taxon information
+tax_levels <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+mt_sag_tax_simpl <- unique(sag_metat[, c(tax_levels, "sample")])
+rownames(mt_sag_tax_simpl) <- mt_sag_tax_simpl$sample
+
+# Better format for species labels
+mt_sag_tax_simpl[grep(" ", mt_sag_tax_simpl$Species, invert = TRUE),
+  "Species"] <- do.call("paste",
+                        mt_sag_tax_simpl[
+                          grep(" ", mt_sag_tax_simpl$Species, invert = TRUE),
+                       c("Genus", "Species")])
+
+# Summarize counts per taxon
+mt_df_sags_m <- melt(
+  sag_metat[,c(grep("T6", colnames(sag_metat), value = TRUE),
+                  "Gene_ID", "sample")])
+mt_df_sags_tax <- dcast(mt_df_sags_m, variable ~ sample,
+                        value.var = "value", fun.aggregate = sum)
+rownames(mt_df_sags_tax) <- mt_df_sags_tax$variable
+mt_df_sags_tax$variable <- NULL
+mt_df_sags_tax <- t(mt_df_sags_tax)
+```
+
+Set up MAG data:
+
+```{r mt_data_mag, cache.lazy=FALSE}
+# Subset data to bacteria and archaea
+mag_metat <- subset(metat_annot, Kingdom %in% c("Archaea", "Bacteria"))
+
+# Simple taxonomy table (combined)
+mt_mag_tax_simpl <- unique(
+  mag_metat[,c("Kingdom", "Phylum", "Class",
+               "Order", "Family", "Genus",
+               "Species", "sample")])
+rownames(mt_mag_tax_simpl) <- mt_mag_tax_simpl$sample
+
+# Reorganize both
+mag_metat_m <- melt(
+  mag_metat[,c(grep("T6", colnames(mag_metat), value = TRUE),
+               "Gene_ID", "sample")])
+
+# Put together + summarize per MAG
+mt_df_mags_tax <- dcast(mag_metat_m, variable ~ sample,
+                        value.var = "value", fun.aggregate = sum)
+rownames(mt_df_mags_tax) <- mt_df_mags_tax$variable
+mt_df_mags_tax$variable <- NULL
+mt_df_mags_tax <- t(mt_df_mags_tax)
+```
+
+```{r mt_data_vst}
+# Combine & VST transform
+mt_df_t6_vst <- varianceStabilizingTransformation(
+  DESeqDataSetFromMatrix(
+  countData = rbind(
+    mt_df_sags_tax,
+    mt_df_mags_tax),
+  colData = sc_meta_24_T6[colnames(mt_df_sags_tax),],
+  design = ~1))
+```
+
+```{r tax_cors_mt}
+# Correlate
+tax_cors_mt <- rcorr(t(assay(mt_df_t6_vst)),
+                     type = "spearman")
+
+# Correlations for SAGs vs MAGs
+tax_cors_cil_mags_mt <- cbind(
+  reshape2::melt(
+    tax_cors_mt$r[rownames(mt_df_mags_tax),
+                  rownames(mt_df_sags_tax)]),
+  p = reshape2::melt(
+    tax_cors_mt$P[rownames(mt_df_mags_tax),
+                  rownames(mt_df_sags_tax)])[,"value"]
+)
+colnames(tax_cors_cil_mags_mt)[1:3] <- c("MAG", "SAG", "r")
+
+# Add MAG genus & SAG species information
+tax_cors_mt_df <- cbind(
+  tax_cors_cil_mags_mt,
+  MAG_Genus = mt_mag_tax_simpl[match(tax_cors_cil_mags_mt$MAG, mt_mag_tax_simpl$sample),
+                               "Genus"],
+  SAG_Species = mt_sag_tax_simpl[match(tax_cors_cil_mags_mt$SAG, mt_sag_tax_simpl$sample),
+                                 "Species"])
+```
+
+## MP
+
+```{r mp_setup}
+# Import table of values without missing value imputation
+mp_raw_file <- "../data/proteomics/proteomics_rawintensity_annotation_taxonomy.tsv"
+mp_raw_df <- fread(mp_raw_file, sep = "\t", data.table = FALSE)
+
+# Trim to T6 digesta, exclude any cow proteins
+mp_raw_dig_t6 <- subset(mp_raw_df, source == "D" & timepoint == "T6" &
+                          database_short != "dbB")
+
+# Sums per taxon + animal
+metap_raw_sums <- reshape2::dcast(mp_raw_dig_t6, genome ~ animal,
+                                  value.var = "intensity",
+                                  fun.aggregate = sum, na.rm = TRUE)
+rownames(metap_raw_sums) <- metap_raw_sums$genome
+metap_raw_sums$genome <- NULL
+
+# Fix one name that doesn't match other tables
+rownames(metap_raw_sums)[grep("Thea", rownames(metap_raw_sums))] <- "Ent_caudatum"
+```
+
+```{r tax_cors_mp}
+# Scale + correlate
+tax_cors_mp <- rcorr(scale(as.matrix(t(metap_raw_sums))))
+
+# Get correlations for SAGs vs MAGs
+tax_cors_cil_mags_mp <- cbind(
+  reshape2::melt(
+    tax_cors_mp$r[intersect(mt_mag_tax_simpl$sample, rownames(tax_cors_mp$r)),
+                  c("Ent_caudatum",
+                    grep("SAG", colnames(tax_cors_mp$r), value = TRUE))]),
+  p = reshape2::melt(
+    tax_cors_mp$P[intersect(mt_mag_tax_simpl$sample,
+                            rownames(tax_cors_mp$r)),
+                  c("Ent_caudatum",
+                    grep("SAG", colnames(tax_cors_mp$P), value = TRUE))])[,"value"]
+)
+colnames(tax_cors_cil_mags_mp)[1:3] <- c("MAG", "SAG", "r")
+
+# Add MAG genus & SAG species information
+tax_cors_mp_df <- cbind(
+  tax_cors_cil_mags_mp,
+  MAG_Genus = mt_mag_tax_simpl[match(tax_cors_cil_mags_mp$MAG,
+                                     mt_mag_tax_simpl$sample),
+                               "Genus"],
+  SAG_Species = mt_sag_tax_simpl[match(tax_cors_cil_mags_mp$SAG,
+                                       mt_sag_tax_simpl$sample),
+                                 "Species"])
+```
+
+## Combined data
+
+```{r cil_da_consensus}
+# Set up consensus for differentially abundant ciliates
+
+# Results from metaT
+metat_da_cil <- read.xlsx("../results/supp_tables/diff_abunds_tax.xlsx",
+                          sheet = "metaT_Eukarya")
+# Include significance in direction variable
+metat_da_cil$up_in <- ifelse(metat_da_cil$padj < 0.1,
+                             metat_da_cil$up_in,
+                             "n.s.")
+# Fix one inconsistent name
+metat_da_cil[grep("YL", metat_da_cil$sample), "sample"] <- sub(
+  "YL", "YL\\.",
+  metat_da_cil[grep("YL", metat_da_cil$sample), "sample"])
+
+# Results from metaP
+metap_da <- read.xlsx("../results/supp_tables/diff_abunds_tax.xlsx",
+                          sheet = "metaP")
+# trim to ciliates
+metap_da_cil <- subset(metap_da, Kingdom == "SAR/Alveolata")
+# include significance in direction variable
+metap_da_cil$up_in <- ifelse(metap_da_cil$padj < 0.1,
+                             metap_da_cil$up_in,
+                             "n.s.")
+
+# Overlap differential abundances
+# (count as significant if p < 0.1 in either of the two omics,
+# unless the two contradict each other)
+sag_da_cons <- do.call("rbind", lapply(
+  make.names(rownames(mt_sag_tax_simpl)), function(x)
+  data.frame(
+    SAG = x,
+    MT = ifelse(
+      length(
+        nrow(
+          metat_da_cil[metat_da_cil$sample == x,] > 0)),
+      metat_da_cil[metat_da_cil$sample == x, "up_in"],
+      NA),
+    MP = ifelse(
+      nrow(
+        metap_da_cil[metap_da_cil$genome == x,]) > 0,
+      metap_da_cil[metap_da_cil$genome == x, "up_in"],
+      NA))
+))
+sag_da_cons$consensus <- sapply(1:nrow(sag_da_cons), function(x){
+  if(sag_da_cons[x, "MT"] == sag_da_cons[x, "MP"]){
+    sag_da_cons[x, "MT"]
+  } else if (sag_da_cons[x, "MT"] == "n.s."){
+    sag_da_cons[x, "MP"]
+  } else if (sag_da_cons[x, "MP"] == "n.s."){
+    sag_da_cons[x, "MT"]
+  } else {
+      "n.s."
+    }
+  })
+```
+
+```{r gen_of_interest}
+# Set up genera of interest list based on PCA loadings
+pca_res <- read.xlsx("../results/supp_tables/dig_pca_res.xlsx",
+                     sheet = "Top_loadings_tax", rowNames = TRUE)
+pc_tax_sum <- aggregate(pca_res, Freq ~ tax, sum)
+gen_of_interest <- unique(sub("\\..*", "",  pc_tax_sum[pc_tax_sum$Freq > 1, "tax"]))
+```
+
+```{r cor_mag_pick}
+# Selecting a consensus of most highly correlated MAGs from the two datasets:
+# first pick top 100 with the most correlations to SAGs
+
+# MetaT
+
+# Table of numbers of correlations with p < 0.05 for MAGs of interest
+tax_cors_mt_df_trim_top <- sort(table(
+  subset(tax_cors_mt_df, MAG_Genus %in% gen_of_interest & p < 0.05)$MAG),
+  decreasing = TRUE)
+
+# MetaP
+
+# Table of numbers of correlations with p < 0.05
+tax_cors_mp_df_trim_top <- sort(table(
+  subset(tax_cors_mp_df, MAG_Genus %in% gen_of_interest & p < 0.05)$MAG),
+  decreasing = TRUE)
+
+# Get those MAGs with at least 10 significant correlations in both data types
+top_cor_mags <- intersect(
+  names(tax_cors_mt_df_trim_top[tax_cors_mt_df_trim_top > 9]),
+  names(tax_cors_mp_df_trim_top[tax_cors_mp_df_trim_top > 9]))
+```
+
+Plot for metatranscriptomics: 
+
+```{r tax_mt_hm}
+# Trim to selected MAGs
+tax_cors_mt_df_trim <- subset(tax_cors_mt_df, MAG %in% top_cor_mags)
+
+# Reorganise for plotting
+
+# Fix SAG labels for harmonizing with consensus list
+tax_cors_mt_df_trim$SAG <- make.names(tax_cors_mt_df_trim$SAG)
+
+# Use correlation coefficient for fill
+tax_cors_mt_df_trim_rmat <- reshape2::dcast(
+  tax_cors_mt_df_trim[,c("SAG", "MAG", "r")],
+  MAG ~ SAG, value.var = "r")
+rownames(tax_cors_mt_df_trim_rmat) <- tax_cors_mt_df_trim_rmat$MAG
+tax_cors_mt_df_trim_rmat$MAG <- NULL
+
+# p for labeling
+tax_cors_mt_df_trim_pmat <- reshape2::dcast(
+  tax_cors_mt_df_trim[,c("SAG", "MAG", "p")],
+  MAG ~ SAG, value.var = "p")
+rownames(tax_cors_mt_df_trim_pmat) <- tax_cors_mt_df_trim_pmat$MAG
+tax_cors_mt_df_trim_pmat$MAG <- NULL
+tax_cors_cil_mags_mt_pstar <- stars.pval(as.matrix(tax_cors_mt_df_trim_pmat))
+
+# Set up colors
+cor_col_fun <- colorRamp2(c(-1, 0, 1), c("#40655e", "white", "#4f28af"))
+
+# Ciliate RCT associations for x-axis order
+cil_sig_vec <- factor(
+  setNames(
+    sub("Enriched in\n", "",
+        sag_da_cons$consensus),
+    sag_da_cons$SAG),
+  levels = c("RCT-A", "n.s.", "RCT-B"))
+
+# MAG genera for y-axis order
+mag_gen_vec_mt <- setNames(
+  mt_mag_tax_simpl[rownames(tax_cors_mt_df_trim_rmat), "Genus"],
+  rownames(tax_cors_mt_df_trim_rmat))
+mag_gen_vec_mt <- factor(mag_gen_vec_mt)
+
+# Plot heatmap
+mt_cor_hm <- Heatmap(as.matrix(tax_cors_mt_df_trim_rmat),
+        col = cor_col_fun,
+        show_column_dend = FALSE,
+        column_split = cil_sig_vec,
+        column_title = NULL,
+        cluster_column_slices = FALSE,
+        show_row_dend = FALSE,
+        show_row_names = FALSE,
+        row_split = mag_gen_vec_mt,
+        row_title_rot = 0,
+        row_title_gp = gpar(fontsize = 7),
+        cluster_row_slices = FALSE,
+        cell_fun = function(j, i, x, y, width, height, fill){
+          grid.text(tax_cors_cil_mags_mt_pstar[i, j], x, y,
+                    gp = gpar(fontsize = 5, col = "gray30"))},
+        row_dend_side = "right",
+        row_names_side = "left",
+        name = "r (Spearman)",
+        rect_gp = gpar(col = "gray30", lwd = 0.5),
+        column_names_gp = grid::gpar(fontsize = 7),
+        top_annotation = HeatmapAnnotation(
+          metaT = anno_block(gp = gpar(fill = c(RCT_cols[1],
+                                              "white",
+                                              RCT_cols[2])),
+                           labels = levels(cil_sig_vec),
+                           labels_gp = gpar(fontsize = 10),
+                           height = unit(5, "mm"),
+                           show_name = TRUE)))
+```
+
+Plot for metaproteomics: 
+
+```{r tax_mp_hm}
+# Trim to selected MAGs
+tax_cors_mp_df_trim <- subset(tax_cors_mp_df, MAG %in% top_cor_mags)
+
+# Reorganise for plotting
+tax_cors_mp_df_trim$SAG <- make.names(tax_cors_mp_df_trim$SAG)
+
+# r for fill
+tax_cors_cil_mags_mp_rmat <- reshape2::dcast(
+  tax_cors_mp_df_trim[,c("SAG", "MAG", "r")],
+  MAG ~ SAG, value.var = "r")
+rownames(tax_cors_cil_mags_mp_rmat) <- tax_cors_cil_mags_mp_rmat$MAG
+tax_cors_cil_mags_mp_rmat$MAG <- NULL
+
+# p for labeling
+tax_cors_cil_mags_mp_pmat <- reshape2::dcast(
+  tax_cors_mp_df_trim[,c("SAG", "MAG", "p")],
+  MAG ~ SAG, value.var = "p")
+rownames(tax_cors_cil_mags_mp_pmat) <- tax_cors_cil_mags_mp_pmat$MAG
+tax_cors_cil_mags_mp_pmat$MAG <- NULL
+tax_cors_cil_mags_mp_pmat <- stars.pval(as.matrix(tax_cors_cil_mags_mp_pmat))
+
+# MAG genera for y-axis
+mag_gen_vec_mp <- setNames(
+  mt_mag_tax_simpl[rownames(tax_cors_cil_mags_mp_rmat), "Genus"],
+  rownames(tax_cors_cil_mags_mp_rmat))
+mag_gen_vec_mp <- factor(mag_gen_vec_mp)
+
+# Plot heatmap
+mp_cor_hm <- Heatmap(as.matrix(tax_cors_cil_mags_mp_rmat),
+        col = cor_col_fun,
+        show_column_dend = FALSE,
+        column_split = cil_sig_vec,
+        column_title = NULL,
+        cluster_column_slices = FALSE,
+        show_row_dend = FALSE,
+        show_row_names = FALSE,
+        row_split = mag_gen_vec_mp,
+        row_title_rot = 0,
+        row_title_gp = gpar(fontsize = 7),
+        cluster_row_slices = FALSE,
+        cell_fun = function(j, i, x, y, width, height, fill){
+          grid.text(tax_cors_cil_mags_mp_pmat[i, j], x, y,
+                    gp = gpar(fontsize = 5, col = "gray30"))},
+        row_dend_side = "right",
+        row_names_side = "left",
+        name = "r (Spearman)",
+        rect_gp = gpar(col = "gray30", lwd = 0.5),
+        column_names_gp = grid::gpar(fontsize = 7),
+        top_annotation = HeatmapAnnotation(
+          metaP = anno_block(gp = gpar(fill = c(RCT_cols[1],
+                                              "white",
+                                              RCT_cols[2])),
+                           labels = levels(cil_sig_vec),
+                           labels_gp = gpar(fontsize = 10),
+                           height = unit(5, "mm"),
+                           show_name = TRUE)))
+```
+
+```{r tax_cor_plot, fig.width=7, fig.height=12}
+# Plot together
+tax_cor_hm_list <- mt_cor_hm %v% mp_cor_hm
+
+ComplexHeatmap::draw(tax_cor_hm_list,
+                     ht_gap = unit(3, "mm"))
+```
+
+# SFig 4
+
+```{r ts_meta}
+# Set up metadata for selected 6 animals with time series data
+ts_samples <- grep("^D.*T", colnames(sag_metat), value = TRUE)
+sc_meta_6 <- data.frame(
+  sample_name = ts_samples,
+  animal = as.numeric(sub("D", "", sub("T.*", "", ts_samples))),
+  timepoint = sub(".*T", "T", ts_samples))
+  
+sc_meta_6 <- merge(sc_meta_6,
+                   sc_meta_full,
+                   by = "animal")
+rownames(sc_meta_6) <- sc_meta_6$sample_name
+sc_meta_6 <- subset(sc_meta_6, sample_name %in% ts_samples &
+                      chosen_6 == TRUE)
+# Drop one animal/timepoint that had no sample
+sc_meta_6 <- subset(sc_meta_6, sample_name != "D28T2")
+```
+
+## Panel a
+
+```{r mt_cil_ts, cache.lazy=FALSE}
+# Summarize counts per species over timepoints
+mt_sags_ts <- reshape2::melt(
+  sag_metat[,c(ts_samples, "Gene_ID", "sample",
+               "Genus", "Species")])
+
+# Fix a species name
+mt_sags_ts$Species[grep("^caudatum$", mt_sags_ts$Species)] <- "Entodinium caudatum"
+
+# Reorganize
+mt_sags_ts_spec <- reshape2::dcast(
+  mt_sags_ts, variable ~ Species,
+  value.var = "value", fun.aggregate = sum)
+rownames(mt_sags_ts_spec) <- mt_sags_ts_spec$variable
+mt_sags_ts_spec$variable <- NULL
+mt_sags_ts_spec <- t(mt_sags_ts_spec)
+
+# Remove large intermediate objects
+rm(sag_metat, mt_sags_ts)
+
+# Match samples and VST transform
+mt_df_ts_cil_dds <- DESeqDataSetFromMatrix(
+  countData = mt_sags_ts_spec[,
+    intersect(rownames(sc_meta_6),
+              colnames(mt_sags_ts_spec))],
+  colData = sc_meta_6[intersect(rownames(sc_meta_6),
+                                colnames(mt_sags_ts_spec)),],
+  design = ~ 1)
+mt_df_ts_cil_vst <- varianceStabilizingTransformation(mt_df_ts_cil_dds,
+                                                      fitType = "local")
+
+# Reorganize for plotting
+mt_df_ts_cil_df <- as.data.frame(
+  cbind(
+  colData(mt_df_ts_cil_vst),
+  t(assay(mt_df_ts_cil_vst))
+))
+
+# Select species of interest based on differential abundance and/or groupings:
+cil_sp_sel <- c("Epidinium.cattanei", "Epidinium.caudatum",
+                "Dasytricha.ruminantium", "Isotricha.intestinalis",
+                "Polyplastron.multivesiculatum", "Entodinium.longinucleatum")
+
+mt_cil_sel_df <- reshape2::melt(mt_df_ts_cil_df[,c("sample_name", "timepoint",
+                                                   "RCT", "animal",
+                                                   cil_sp_sel)],
+                      id.vars = c("sample_name", "timepoint", "RCT", "animal"))
+mt_cil_sel_df$variable <- factor(mt_cil_sel_df$variable, levels = cil_sp_sel)
+levels(mt_cil_sel_df$variable) <- sub("\\.", " ", levels(mt_cil_sel_df$variable))
+
+# Plot
+mt_cil_ts <- ggplot(mt_cil_sel_df, aes(y = value, x = timepoint,
+                                       shape = RCT, color = RCT, fill = RCT)) +
+  geom_line(aes(group = animal)) +
+  geom_point(color = "black") +
+  facet_wrap(~variable, scale = "free_y", ncol = 1) +
+  scale_color_manual(values = RCT_cols) +
+  scale_fill_manual(values = RCT_cols) +
+  scale_shape_manual(values = RCT_shapes) +
+  theme_classic(base_size = 6) +
+  guides(shape = guide_legend(ncol = 1)) +
+  ggtitle("A. Metatranscriptomics") +
+  ylab("expression (VST-transformed)") +
+  theme(plot.title = element_text(face = "bold", size = 8),
+        legend.position = "bottom")
+```
+
+## Panel b
+
+```{r mp_cil_ts, fig.width=3, fig.height=8}
+# Trim to ciliate proteins from digesta of animals with time series data
+mp_raw_ts_cil <- subset(mp_raw_df, chosen_6 == TRUE &
+                          source == "D" &
+                          tax_kingdom == "SAR/Alveolata")
+# Better species labeling
+mp_raw_ts_cil$Species <- paste(mp_raw_ts_cil$tax_genus,
+                           mp_raw_ts_cil$tax_species,
+                           sep = ".")
+# Cow sample variable
+mp_raw_ts_cil$sample_name <- paste0(mp_raw_ts_cil$source,
+                                    ifelse(nchar(mp_raw_ts_cil$animal) > 1,
+                                           mp_raw_ts_cil$animal,
+                                           paste0("0", mp_raw_ts_cil$animal)),
+                                           mp_raw_ts_cil$timepoint)
+
+# Remove timepoints/animals with very few (<1000) detected protein groups
+mp_raw_ts_cil_trim <- subset(mp_raw_ts_cil,
+                             sample_name %in%
+                               names(which(table(mp_raw_ts_cil$sample_name) > 1000)))
+
+# Summarize by species
+mt_sags_ts_spec <- reshape2::dcast(
+  reshape2::melt(mp_raw_ts_cil_trim[,c("sample_name", "genome",
+                                  "Species", "intensity")]),
+  sample_name ~ Species,
+  value.var = "value", fun.aggregate = sum)
+rownames(mt_sags_ts_spec) <- mt_sags_ts_spec$sample_name
+mt_sags_ts_spec <- merge(mt_sags_ts_spec,
+                         sc_meta_6[rownames(mt_sags_ts_spec),],
+                         by = "sample_name")
+
+# Reorganize
+cil_sp_sel_mp_df <- reshape2::melt(mt_sags_ts_spec[,c("animal",
+                                                      "timepoint",
+                                                      "RCT",
+                                                       cil_sp_sel)],
+                                   id.vars = c("animal", "RCT", "timepoint"))
+
+# Better species labels
+cil_sp_sel_mp_df$variable <- factor(cil_sp_sel_mp_df$variable, levels = cil_sp_sel)
+levels(cil_sp_sel_mp_df$variable) <- sub("\\.", " ", levels(cil_sp_sel_mp_df$variable))
+
+# Plot
+mp_cil_ts <- ggplot(cil_sp_sel_mp_df, aes(y = value, x = timepoint,
+                                          shape = RCT,
+                                          color = RCT,
+                                          fill = RCT)) +
+  geom_line(aes(group = animal)) +
+  geom_point(color = "black") +
+  facet_wrap(~variable, scale = "free_y", ncol = 1) +
+  scale_color_manual(values = RCT_cols) +
+  scale_fill_manual(values = RCT_cols) +
+  scale_shape_manual(values = RCT_shapes) +
+  theme_classic(base_size = 6) +
+  guides(shape = guide_legend(ncol = 1)) +
+  ggtitle("B. Metaproteomics") +
+  ylab("Sum of intensities") +
+  theme(plot.title = element_text(face = "bold", size = 8),
+        legend.position = "bottom")
+```
+
+## Combined export
+
+```{r cil_ts_combo, fig.width=7, fig.height=9}
+plot_grid(
+  mt_cil_ts, mp_cil_ts,
+  ncol = 2)
+```

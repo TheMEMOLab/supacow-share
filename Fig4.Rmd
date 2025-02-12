@@ -1,0 +1,698 @@
+---
+title: "| Fig4 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("data.table")
+library("gtools")
+library("Hmisc")
+library("gridExtra")
+library("ggh4x")
+library("cowplot")
+library("reshape2")
+library("ggpubr")
+library("openxlsx")
+library("ggforce")
+library("DESeq2")
+
+# Custom generic functions
+source("fig_functions.R")
+```
+
+This script uses the PCA results from `Fig2.Rmd` for selecting taxa of interest, so that must have been run before executing this file (those results are also available as a supplementary table in the manuscript).
+
+# Panels a & b
+
+## Setting up functions of interest
+
+```{r setup_koi}
+# Set up DRAM data
+dram_file <- "../data/metagenomics/metabolism_summary.xlsx"
+dram_file_sheets <- getSheetNames(dram_file)
+mags_dram_full <- lapply(dram_file_sheets, function(x)
+  read.xlsx(dram_file, sheet = x))
+names(mags_dram_full) <- dram_file_sheets
+
+# CAZymes
+cazy_of_interest <- subset(mags_dram_full[[2]], header == "CAZY")[,1:5]
+# drop GTs as less interesting
+cazy_of_interest <- cazy_of_interest[-grep("GT", cazy_of_interest$gene_id),]
+# Get simplified substrate info from subheader
+cazy_of_interest$substrates <- sapply(
+  strsplit(
+    gsub(" \\(pectic galactan\\)", "",
+         gsub(" \\(hemicellulose\\)", "", ignore.case = TRUE,
+         gsub(" Backbone Cleavage", "", ignore.case = TRUE,
+              gsub(" Oligo Cleavage", "", ignore.case = TRUE,
+                   cazy_of_interest$subheader)))),
+                split = ", "), function(x) paste(unique(x), collapse = ", "))
+
+# KOs - from separate curated list
+# (based on supplementary table from https://doi.org/10.1101/2024.08.15.608071)
+kos_of_interest <- read.csv("../data/kos_of_interest.csv")
+
+# Merge the two lists
+func_of_interest <- rbind(
+  data.frame(type = "CAZY",
+             subtype = ifelse(is.na(cazy_of_interest$subheader),
+                              "no substrates\nin reference",
+                              cazy_of_interest$substrates),
+             gene_id = cazy_of_interest$gene_id,
+             label = cazy_of_interest$gene_id),
+  data.frame(type = "KO",
+             subtype = kos_of_interest$pathway,
+             gene_id = kos_of_interest$ko,
+             label = paste0(kos_of_interest$ko, " (",
+                            kos_of_interest$abbreviation, ")")))
+
+# Genera of interest based on PCA loadings
+pca_res <- read.xlsx("../results/supp_tables/dig_pca_res.xlsx",
+                     sheet = "Top_loadings_tax", rowNames = TRUE)
+pca_res$Genus <- sub(" .*", "", pca_res$tax)
+pc_tax_sum <- aggregate(pca_res, Freq ~ Genus, sum)
+gen_of_interest <- unique(sub("\\..*", "",  pc_tax_sum[pc_tax_sum$Freq > 1, "Genus"]))
+
+# MAGs of interest: those in the genera from the PCA results
+mag_tax <- read.table("../data/SupaCowTaxTotal.tsv", sep = "\t",
+                      header = TRUE, row.names = 1)
+mag_tax <- subset(mag_tax, Kingdom %in% c("Archaea", "Bacteria"))
+mag_tax$MAG <- rownames(mag_tax)
+mags_of_interest <- subset(mag_tax, Genus %in% gen_of_interest)
+```
+
+## metaT
+
+```{r metat_kos_of_interest}
+# Import metaT count data
+metat_annot <- fread("../data/transcriptomics/MetaT.RawCounts.Annotated.zerotrim.csv",
+                    data.table = FALSE)
+rownames(metat_annot) <- metat_annot$Gene_ID
+
+# Import metadata
+meta_ch24 <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                        sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+meta_ch24 <- subset(meta_ch24, chosen_24 == TRUE)
+mt_ko_meta <- meta_ch24
+rownames(mt_ko_meta) <- paste0("D",
+                              ifelse(nchar(mt_ko_meta$animal) > 1,
+                                     mt_ko_meta$animal,
+                                     paste0("0", mt_ko_meta$animal)),
+                                     "T6")
+
+# Simplified cazy best hits
+metat_annot$cazy_id <- sub("\\.hmm", "", sub("_.*", "", metat_annot$cazy_best_hit))
+
+# Make a new single function-of-interest variable, as
+# genes may have annotations matching multiple lists.
+# order of preference: cazy > KO 
+metat_annot$func_id <- ifelse(!is.na(metat_annot$cazy_id),
+                                     metat_annot$cazy_id,
+                                     ifelse(!is.na(metat_annot$ko_id),
+                                            metat_annot$ko_id,
+                                            ifelse(!is.na(metat_annot$uniref_id),
+                                                   metat_annot$uniref_id,
+                                                   metat_annot$pfam_hits)))
+
+# Counts for DESeq2
+metat_annot_counts <- metat_annot[,grep("T6", colnames(metat_annot))]
+
+# Due to the very large number of transcripts,
+# trim to those present in more than five animals
+metat_annot_counts_trim <- metat_annot_counts[rowSums(metat_annot_counts > 0) > 5,]
+```
+
+```{r metat_kos_of_interest_ds2}
+# Run DESeq2 comparisons
+mt_func_dds <- DESeqDataSetFromMatrix(
+  countData = metat_annot_counts_trim,
+  colData = mt_ko_meta[colnames(metat_annot_counts_trim),],
+  design = ~RCT)
+mt_func_ds2 <- DESeq(mt_func_dds)
+mt_func_ds2 <- results(mt_func_ds2)
+mt_func_ds2$up_in <- ifelse(mt_func_ds2$log2FoldChange > 0,
+                            "B", "A")
+
+# Add annotation details
+mt_func_ds2_res <- cbind(mt_func_ds2,
+                         metat_annot[rownames(mt_func_ds2),
+                                     grep("D.*T", colnames(metat_annot),
+                                              invert = TRUE)])
+```
+
+```{r hnd_fix}
+# Manual edit: we know due to detailed inspection of the sequences that
+# there are genes from genera Merdiplasma and RUG762 that are likely to be
+# Hnd hydrogenases, but were not annotated as such by DRAM.
+# Label them as such based on that separate manual curation.
+hnd_add <- read.csv("../data/metagenomics/hnd_annotations_fix.csv")
+mt_func_ds2_res[hnd_add$Gene_ID, "func_id"] <- hnd_add$ko
+```
+
+```{r metaT_func_export}
+# Export results table (as part of new excel workbook)
+
+# To keep the excel at a manageable size,
+# include only transcripts with adjusted p < 0.1 that have
+# an annotation rank better than D from DRAM and
+# either a KO or a CAZyme annotation
+mt_func_ds2_res_exp <- subset(mt_func_ds2_res, !is.na(padj) & padj < 0.1 &
+                                rank %in% c("A", "B", "C") &
+                                (!is.na(ko_id) | !is.na(cazy_id)))
+
+# Remove some redundant columns
+mt_func_ds2_res_exp <- mt_func_ds2_res_exp[,setdiff(colnames(mt_func_ds2_res_exp),
+                                                    c("classification",
+                                                      "GenomeName", "suffix",
+                                                      "geneNumber", "Genome",
+                                                      "GeneName", "FungiproteinId",
+                                                      "FungitranscriptId"))]
+
+# Export
+func_results_export <- createWorkbook()
+addWorksheet(func_results_export, "metaT")
+writeData(func_results_export, "metaT", mt_func_ds2_res_exp)
+
+# Clean up this version of the data frame as it's not used downstream
+rm(mt_func_ds2_res_exp)
+```
+
+```{r metat_kos_of_interest_trim}
+# Select features of interest (function + genus) that are significant
+mt_func_ds2_res_trim <- subset(mt_func_ds2_res,
+                               Genus %in% gen_of_interest &
+                                 func_id %in% func_of_interest$gene_id &
+                                 !is.na(padj) & padj < 0.1)
+
+# Count n of significant transcripts per genus
+mt_ds2_summary <- dcast(as.data.frame(mt_func_ds2_res_trim), func_id + up_in ~ Genus)
+# Add function details
+colnames(mt_ds2_summary)[grep("func_id", colnames(mt_ds2_summary))] <- "gene_id"
+mt_ds2_summary <- merge(mt_ds2_summary, func_of_interest, by = "gene_id")
+mt_ds2_summary <- melt(mt_ds2_summary)
+```
+
+## metaP
+
+```{r metap_kos_of_interest}
+# Import data
+mp_raw_file <- "../data/proteomics/proteomics_rawintensity_annotation_taxonomy.tsv"
+mp_raw_df <- fread(mp_raw_file, sep = "\t", data.table = FALSE)
+
+# Trim to T6 digesta, exclude any cow proteins
+mp_raw_dig_t6 <- subset(mp_raw_df, source == "D" & timepoint == "T6" &
+                          database_short != "dbB")
+# Simplified KO labels
+mp_raw_dig_t6$ko <- gsub("ko\\:", "", mp_raw_dig_t6$KEGG_ko)
+
+# Unified preferred functional annotation column, similar preference to MT above
+mp_raw_dig_t6$func_id <- ifelse(!is.na(mp_raw_dig_t6$CAZy),
+                                       mp_raw_dig_t6$CAZy,
+                                       ifelse(!is.na(mp_raw_dig_t6$ko),
+                                              mp_raw_dig_t6$ko,
+                                              mp_raw_dig_t6$PFAMs))
+
+# Reorganise for statistics
+mp_raw_per_animal <- dcast(mp_raw_dig_t6,
+                           animal ~ protein,
+                           value.var = "intensity",
+                           sum)
+
+# Trim rarer protein groups
+# (require presence in more than 5 animals)
+mp_raw_per_animal_trim <- mp_raw_per_animal[,c("animal",
+                                               names(
+                                                 which(
+                                                   colSums(
+                                                     mp_raw_per_animal[2:ncol(mp_raw_per_animal)] > 0) > 5)))]
+
+# Using protein names as labels; they need adjusting to work properly
+prot_name_fix <- setNames(colnames(mp_raw_per_animal_trim),
+                          make.names(colnames(mp_raw_per_animal_trim)))
+prot_name_fix <- prot_name_fix[2:length(prot_name_fix)]
+colnames(mp_raw_per_animal_trim) <- make.names(colnames(mp_raw_per_animal_trim))
+
+# Add metadata
+mp_raw_per_animal_trim <- merge(mp_raw_per_animal_trim, meta_ch24, by = "animal")
+
+# Run simple statistics for RCTs (Wilcoxon rank sum tests)
+metap_func_da_res <- basic_rct_wilcox(mp_raw_per_animal_trim,
+                                      names(prot_name_fix))
+# Add back annotation details
+metap_func_da_res <- cbind(metap_func_da_res,
+                           mp_raw_dig_t6[match(prot_name_fix, mp_raw_dig_t6$protein),
+                                         c("func_id", "genome",
+                                           grep("tax", colnames(mp_raw_dig_t6), value = TRUE),
+                                           "protein", "seed_ortholog", "Description")])
+# Fix one reference genome label inconsistent across layers
+metap_func_da_res[grep("Thea", metap_func_da_res$genome),
+                  "genome"] <- "Ent_caudatum"
+
+# Due to the annotation workflow for metaP (eggNOG),
+# some functional annotations in these results include multiple KOs or CAZymes;
+# split those into individual rows
+# (NB - this does mean that some of them are counted more than once!)
+metap_func_da_res_indiv <- metap_func_da_res[grep("\\,", metap_func_da_res$func_id, invert = TRUE),]
+metap_func_da_res_multi <- metap_func_da_res[grep("\\,", metap_func_da_res$func_id),]
+metap_func_da_res_multi_fix <- do.call("rbind", lapply(1:nrow(metap_func_da_res_multi), function(x){
+  func <- strsplit(metap_func_da_res_multi[x, "func_id"], split = ",")
+  data.frame(
+    feature = paste(rownames(metap_func_da_res_multi)[x],
+                      1:length(func[[1]]), sep = "."),
+    func_id = unlist(func),
+    metap_func_da_res_multi[x, setdiff(colnames(metap_func_da_res_multi),
+                                       c("feature", "func_id"))],
+        row.names = paste(rownames(metap_func_da_res_multi)[x],
+                      1:length(func[[1]]), sep = "."))
+  }))
+metap_func_da_res_fix <- rbind(
+  metap_func_da_res_indiv,
+  metap_func_da_res_multi_fix)
+
+# Trim to functions & genera of interest
+metap_func_da_res_trim <- subset(metap_func_da_res_fix,
+                                 tax_genus %in% gen_of_interest &
+                                   func_id %in% func_of_interest$gene_id)
+
+# Summary of significant hits
+mp_da_summary <- dcast(subset(metap_func_da_res_trim, padj < 0.1),
+                       func_id + up_in ~ tax_genus)
+
+# Add function details
+colnames(mp_da_summary)[grep("func_id", colnames(mp_da_summary))] <- "gene_id"
+mp_da_summary <- merge(mp_da_summary, func_of_interest, by = "gene_id")
+mp_da_summary <- melt(mp_da_summary)
+```
+
+```{r metaP_func_export}
+# Exporting significant results (as part excel workbook)
+
+# Trim to significant
+metap_func_da_res_fix_sig <- subset(metap_func_da_res_fix, padj < 0.1)
+
+# Export
+addWorksheet(func_results_export, "metaP")
+writeData(func_results_export, "metaP",
+          metap_func_da_res_fix_sig)
+```
+
+## Combined plot
+
+```{r func_combo}
+# Fix a few column names
+colnames(mt_ds2_summary)[grep("variable", colnames(mt_ds2_summary))] <- "Genus"
+colnames(mp_da_summary)[grep("variable", colnames(mp_da_summary))] <- "Genus"
+
+# Harmonize RCT variable
+mp_da_summary$up_in <- sub("Enriched in\nRCT-", "", mp_da_summary$up_in)
+
+# Combine data
+sel_func_summary <- rbind(
+  data.frame(mt_ds2_summary,
+             data = "metaT"),
+  data.frame(mp_da_summary,
+             data = "metaP"))
+sel_func_summary$data <- factor(sel_func_summary$data,
+                              levels = c("metaT", "metaP"))
+
+# Manual set-up for facet grouping labels
+sel_func_summary$func_facet <- ifelse(sel_func_summary$type == "CAZY",
+                                               paste0("CAZymes: ", sub("-", "-\n",
+                                                   sub(" ", "\n",
+                                          capitalize(
+                                               tolower(sel_func_summary$subtype))))),
+                                             paste0("KOs: ",
+                                                    sub(" via", "\nvia",
+                                                        sub("WLP.*",
+                                                      "Wood-\nLjungdahl\npathway",
+                                                      capitalize(sel_func_summary$subtype)))))
+sel_func_summary$func_facet <- factor(sel_func_summary$func_facet,
+                                      levels = c(
+                                        unique(subset(sel_func_summary,
+                                                      type == "CAZY")$func_facet),
+                                        sort(
+                                          unique(subset(sel_func_summary,
+                                                        type == "KO")$func_facet))))
+
+# Simplify CAZyme categories: grouping together everything with more than 1 substrate
+levels(sel_func_summary$func_facet)[
+  grep(",", levels(sel_func_summary$func_facet))] <- "CAZymes:\nmultiple\nsubstrates"
+# Add the without-substrate ones into this category
+# as they're supposedly more generic
+levels(
+  sel_func_summary$func_facet)[grep("reference",
+                                    levels(sel_func_summary$func_facet))] <- "CAZymes:\nmultiple\nsubstrates"
+  
+# MAGs vs SAGs variable
+sel_func_summary$tax_db <- ifelse(
+  sel_func_summary$Genus %in% mags_of_interest$Genus,
+  "MAGs", "SAGs")
+
+# Drop any empty rows
+sel_func_summary <- subset(sel_func_summary, value > 0)
+sel_func_summary$subtype <- factor(sel_func_summary$subtype,
+                                   levels = c(
+                                     unique(subset(sel_func_summary,
+                                                   type == "CAZY")$subtype),
+                                     unique(subset(sel_func_summary,
+                                                   type == "KO")$subtype)))
+
+# Directional variable for differentially abundant features
+sel_func_summary$AB_value <- ifelse(sel_func_summary$up_in == "A",
+                                    sel_func_summary$value,
+                                    -sel_func_summary$value)
+
+# Categorical color variable
+sel_func_summary$AB_fill <- cut(
+  sel_func_summary$AB_value,
+  breaks = c(-100, -25, -10, -5, -2, -0.5, 0.5, 1, 5, 10, 25, 60)
+)
+AB_diff_cols <- setNames(c("#49ad8b", "#6dc7a8", "#A4D6C5", "#D2EBE2",
+                           "#f7fcfa", "white", "gray95", "gray90", "gray80", "gray75", "gray65"),
+                         levels(sel_func_summary$AB_fill))
+```
+
+### a. MAGs
+
+```{r func_combo_mags}
+# Focus on bacteria (== exclude genus Methanobrevibacter)
+sel_func_summary_mags <- subset(sel_func_summary, tax_db == "MAGs" &
+                                  Genus != "Methanobrevibacter")
+
+# Organize genera manually according to expected RCT association
+sel_func_summary_mags$Genus <- factor(
+  sel_func_summary_mags$Genus,
+  levels = rev(c("Prevotella", "Sodaliphilus", "UBA1066", "Ruminococcus",
+             "Faecousia", "Merdiplasma", "RUG626", "RUG762", "UBA1213")))
+
+# Trim to the top 10 categories with the largest total number
+# of differentially abundant features
+mag_da_func_summary <- aggregate(value ~ func_facet, sel_func_summary_mags, sum)
+mag_da_func_summary <- mag_da_func_summary[order(mag_da_func_summary$value,
+                                                 decreasing = TRUE),]
+sel_func_summary_mags_trim <- subset(sel_func_summary_mags,
+                                     func_facet %in% 
+                                       mag_da_func_summary[1:10, "func_facet"])
+
+# Further trim to the KOs/CAZymes with more than 4 significant features in the output
+mag_da_label_summary <- aggregate(value ~ label, sel_func_summary_mags_trim, sum)
+sel_func_summary_mags_trim <- subset(
+  sel_func_summary_mags_trim,
+  label %in%
+    subset(mag_da_label_summary, value > 4)$label)
+
+# Reorder functional facets
+sel_func_summary_mags_trim$func_facet <- factor(
+  sel_func_summary_mags_trim$func_facet,
+  levels = c(
+    sort(
+      grep("CAZyme",
+           unique(sel_func_summary_mags_trim$func_facet),
+           value = TRUE)),
+  sort(
+    grep("KO",
+         unique(sel_func_summary_mags_trim$func_facet),
+         value = TRUE))))
+
+# Adjust longer genus names for plotting
+levels(sel_func_summary_mags_trim$Genus) <- sub("UBA", "UBA\n",
+                                                sub("RUG", "RUG\n",
+                                                    sub("Merdiplasma", "Merdi-\nplasma",
+                                                        sub("Faecousia", "Faec-\nousia",
+                                                            levels(sel_func_summary_mags_trim$Genus)))))
+
+# Plot  
+mags_func_plot <- ggplot(sel_func_summary_mags_trim,
+                         aes(x = data, y = label,
+                             fill = AB_fill, label = value)) +
+  geom_tile(color = "gray20") +
+  scale_fill_manual(values = AB_diff_cols) +
+  geom_text(size = 1.5) +
+  theme_classic(base_size = 6) +
+  ylab(NULL) + xlab(NULL) +
+  facet_nested(func_facet~Genus+up_in,
+               scale = "free", space = "free",
+               strip = strip_nested(size = "variable")) +
+  theme(strip.text.y = element_text(angle = 0, size = 5),
+        axis.text.x = element_text(angle = 33, hjust = 1, vjust = 1),
+        plot.title = element_text(face = "bold", size = 12),
+        panel.background = element_rect(fill = "white", colour = "black"),
+        legend.position = "none")
+```
+
+### b. SAGs
+
+```{r func_combo_sags}
+# Trim to Protozoa (SAGs)
+sel_func_summary_sags <- subset(sel_func_summary, tax_db == "SAGs")
+
+# Reorganise genera by expected RCT associations
+sel_func_summary_sags$Genus <- factor(sel_func_summary_sags$Genus,
+                                         levels = rev(c("Epidinium", "Diplodinium", "Eremoplastron",
+                                                   "Ostracodinium", "Isotricha", "Polyplastron",
+                                                   "Entodinium")))
+
+# Trim to top 10 categories
+sag_da_func_summary <- aggregate(value ~ func_facet, sel_func_summary_sags, sum)
+sag_da_func_summary <- sag_da_func_summary[order(sag_da_func_summary$value,
+                                                 decreasing = TRUE),]
+sel_func_summary_sags_trim <- subset(sel_func_summary_sags,
+                                     func_facet %in% 
+                                       sag_da_func_summary[1:10, "func_facet"])
+
+# Further trim to those genes/CAZymes with more
+# than one 4 entries in the output
+sag_da_label_summary <- aggregate(value ~ label, sel_func_summary_sags_trim, sum)
+sel_func_summary_sags_trim <- subset(
+  sel_func_summary_sags_trim,
+  label %in%
+    subset(sag_da_label_summary, value > 4)$label)
+
+# Adjust longer genus names for plotting
+levels(sel_func_summary_sags_trim$Genus) <- sub("Eremoplastron", "Eremo-\nplastron",
+                                                sub("Ostracodinium", "Ostraco-\ndinium",
+                                                    levels(sel_func_summary_sags_trim$Genus)))
+
+# Adjust function facet labels for plotting
+levels(sel_func_summary_sags_trim$func_facet) <- sub(" Amorphous\ncellulose", "\nAmorphous cellulose",
+                                                     sub(" Beta-\nmannan", "\nBeta-mannan",
+                                                         levels(sel_func_summary_sags_trim$func_facet)))
+
+# Plot
+sags_func_plot <- ggplot(sel_func_summary_sags_trim,
+                         aes(x = data, y = label,
+                             fill = AB_fill, label = value)) +
+  geom_tile(color = "gray20") +
+  scale_fill_manual(values = AB_diff_cols) +
+  geom_text(size = 1.5) +
+  theme_classic(base_size = 6) +
+  ylab(NULL) + xlab(NULL) +
+  facet_nested(func_facet~Genus+up_in,
+               scale = "free", space = "free",
+               strip = strip_nested(size = "variable")) +
+  theme(strip.text.y = element_text(angle = 0, size = 5,
+                                    margin = margin(b = 25, t = 25)),
+        axis.text.x = element_text(angle = 33, hjust = 1, vjust = 1),
+        plot.title = element_text(face = "bold", size = 12),
+        panel.background = element_rect(fill="white", colour="black"),
+        legend.position = "none")
+```
+
+# Panel c
+
+## VFAs
+
+```{r vfas_RCT}
+# Import data
+vfa_df <- read.csv("../data/metabolomics/VFA_a129-2022_molperc.csv",
+                   stringsAsFactors = TRUE)
+
+# Trim to T6 + add metadata
+vfa_df <- merge(subset(vfa_df, timepoint == "T6"),
+                meta_ch24, by = "animal")
+
+# Get VFA variables
+vfa_vars <- grep("acid", colnames(vfa_df), value = TRUE)
+vfa_vars <- vfa_vars[c(1, 2, 4, 3, 5, 6)]
+
+# Calculate significances
+vfa_p <- basic_rct_wilcox(vfa_df, vfa_vars)
+vfa_p$star <- stars.pval(vfa_p$padj)
+
+# Scale for plotting
+vfa_df_scaled <- cbind(
+  vfa_df[,c("animal", "RCT")],
+  scale(vfa_df[,vfa_vars])
+)
+  
+# Reorganize data
+vfa_df_m <- melt(vfa_df_scaled, id.vars = c("animal", "RCT"))
+vfa_df_m$label <- sub("_", " ", vfa_df_m$variable)
+
+# Export results (as part excel workbook)
+addWorksheet(func_results_export, "VFAs")
+writeData(func_results_export, "VFAs", vfa_p)
+```
+
+## Untargeted metabolomics
+
+```{r utmb}
+# Import data
+dig_mb <- as.data.frame(
+  readRDS("../data/metabolomics/10_MSOmics_abundances_rect_post.rds"))
+
+# Focus on the metabolites with more confident identification: level 1 and 2a
+dig_mb_trim <- subset(dig_mb, annotation_level %in% c("1", "2a"))
+  
+# Reorganize data
+dig_mb_trim_t <- as.data.frame(t(dig_mb_trim[,grep("D.*S", colnames(dig_mb_trim))]))
+colnames(dig_mb_trim_t) <- dig_mb_trim$compound_number
+dig_mb_trim_t$animal <- as.numeric(sub("T6S", "", sub("D", "", rownames(dig_mb_trim_t))))
+# Add metadata
+dig_mb_trim_t <- merge(dig_mb_trim_t, meta_ch24, by = "animal")
+
+# Calculate simple stats
+dig_mb_p <- basic_rct_wilcox(dig_mb_trim_t, dig_mb_trim$compound_number)
+
+# Add molecule names
+mb_details <- dig_mb_trim[,grep("D.*S", colnames(dig_mb_trim),
+                                invert = TRUE)]
+mb_details$feature <- mb_details$compound_number
+dig_mb_p <- merge(dig_mb_p,
+                  mb_details[,c("feature", "annotation_level",
+                                "name.x", "formula",
+                                "pub_chem_id", "hmdb_sub_class")])
+# Fix a column name
+colnames(dig_mb_p)[grep("name.x", colnames(dig_mb_p))] <- "name"
+
+# Grab results with padj < 0.1
+dig_mb_p_trim <- subset(dig_mb_p, padj < 0.1)
+# p-values to stars
+dig_mb_p_trim$star <- stars.pval(dig_mb_p_trim$padj)
+
+# Scale for plotting
+dig_mb_scaled <- data.frame(
+  dig_mb_trim_t[,c("animal", "RCT")],
+  scale(dig_mb_trim_t[,dig_mb_p_trim$feature])
+)
+  
+# Reorganize data
+mb_df_scaled_m <- melt(dig_mb_scaled, id.vars = c("animal", "RCT"))
+colnames(mb_df_scaled_m)[grep("variable", colnames(mb_df_scaled_m))] <- "feature"
+# Put back molecule names
+mb_df_scaled_m <- merge(mb_df_scaled_m, dig_mb_p_trim[,c("feature", "name")])
+mb_df_scaled_m$label <- mb_df_scaled_m$name
+```
+
+```{r mb_res_export}
+# Export results (as part excel workbook)
+addWorksheet(func_results_export, "Metabolites")
+writeData(func_results_export, "Metabolites", dig_mb_p)
+
+# Finalize export to excel
+saveWorkbook(func_results_export,
+             "../results/supp_tables/diff_abunds_func.xlsx",
+             overwrite = TRUE)
+```
+
+## Combined
+
+```{r combo_fig4, fig.width=4, fig.height=10}
+# Put together the results
+feature_comp <- rbind(
+  data.frame(
+    vfa_df_m[,c("animal", "RCT", "label", "value")], 
+    type = "VFAs"),
+  data.frame(
+    mb_df_scaled_m[,c("animal", "RCT", "label", "value")],
+    type = "Untargeted metabolomics")
+)
+
+# For simpler plotting: get the median and IQR for each variable
+feature_comp_summary <- do.call(
+  "rbind", lapply(c("A", "B"), function(x){
+    df <- subset(feature_comp, RCT == x)
+    res <- aggregate(value ~ label + type, df, summary)
+    res <- cbind(res[,c("label", "type")], unlist(res$value))
+    res$RCT <- x
+    return(res)
+  }))
+
+# Add p-value stars
+vfa_p$label <- sub("_", " ", vfa_p$feature)
+dig_mb_p_trim$label <- dig_mb_p_trim$name
+
+feature_comp_summary <- merge(
+  feature_comp_summary,
+  rbind(vfa_p[,c("label", "star")],
+        dig_mb_p_trim[,c("label", "star")]),
+  by = "label")
+
+# Label fine-tuning
+feature_comp_summary$star <- sub("\\.", "·", feature_comp_summary$star)
+feature_comp_summary$type <- factor(feature_comp_summary$type,
+                                    levels = c("VFAs", "Untargeted metabolomics"))
+# Order variables by RCT-B median
+feature_comp_summary$label <- factor(
+  feature_comp_summary$label,
+  levels = subset(feature_comp_summary, RCT == "B")[
+    order(subset(feature_comp_summary, RCT == "B")$Median), "label"])
+
+# Add line breaks to long metabolite names
+levels(feature_comp_summary$label) <- sub("Indole-3-", "Indole-3-\n",
+                                          sub("N-acetyl-", "N-acetyl-\n",
+                                          sub("Methyl ", "Methyl\n",
+                                          sub("Hydroxyindole-",
+                                              "Hydroxyindole-\n",
+                                              levels(feature_comp_summary$label)))))
+
+# Trim to only those with p < 0.1
+feature_comp_summary_trim <- subset(feature_comp_summary, star != " ")
+
+# Plot
+p_metab <- ggplot(feature_comp_summary_trim, aes(y = label, fill = RCT)) +
+  geom_errorbar(aes(xmin = `1st Qu.`, xmax = `3rd Qu.`),
+                position = position_dodge(width = 0.5),
+                width = 0.3) +
+  geom_point(aes(x = Median), shape = 23,
+             position = position_dodge(width = 0.5)) +
+  scale_fill_manual(values = RCT_cols) +
+  facet_col(~type, scales = "free_y",  space = "free") +
+  ylab(NULL) + xlab("value (scaled)") +
+  xlim(-1.5, 1.7) +
+  theme_classic(base_size = 7) +
+  geom_text(aes(label = star), x = 1.65) +
+  theme(legend.position = "bottom",
+        legend.box.background = element_rect(color = "black"),
+        plot.title = element_text(face = "bold", size = 12),
+        panel.grid.major.y = element_line(color = "gray90"),
+        legend.margin = margin(0, 2, 0, 2, unit = "pt"))
+```
+
+# Combined export of all panels
+
+```{r fig4_export, fig.width=7, fig.height=11}
+plot_grid(
+  mags_func_plot + ggtitle("a"),
+  plot_grid(
+    sags_func_plot + ggtitle("b"),
+    p_metab + ggtitle("c"),
+    nrow = 1,
+    rel_widths = c(0.73, 0.27)),
+  ncol = 1, rel_heights = c(0.575, 0.425))
+```

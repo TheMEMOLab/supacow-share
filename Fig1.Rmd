@@ -1,0 +1,104 @@
+---
+title: "| Fig (table) 1c for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+mainfont: Arial
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=FALSE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# Required packages
+library("tidyverse")
+library("gt")
+library("Hmisc")
+library("gtsummary")
+```
+
+Details for
+
+1. all animals with 16S data (used for initial split definition),
+2. selected 24 animals (used for most of the rest of the analyses).
+
+Import animal details:
+
+```{r metadata_setup}
+# All animals in the experiment
+sc_meta_full <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                           sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+
+# Animals with 16S amplicon data
+dnas_16s_meta <- read.csv("../data/16S/dnasense_meta.csv")
+dnas_16s_meta$animal <- as.numeric(sub("A", "", dnas_16s_meta$Animal))
+sc_meta_16s <- subset(sc_meta_full, animal %in% unique(dnas_16s_meta$animal))
+
+# 24 animals with multiomic data
+sc_meta_ch24 <- subset(sc_meta_full, chosen_24 == TRUE)
+```
+
+Summarize numerical measurements by breed:
+
+## Animals with amplicon data
+
+```{r meta_basics_breed_all}
+breed_tbl_16s <- sc_meta_16s %>%
+  gtsummary::select(liveweight, age_start_performance_test,
+                    performance_test_lwg, performance_test_dmi,
+                    fcr, ch4_g_kg_dmi, breed) %>%
+  tbl_summary(
+    by = breed,
+     missing = "no") %>%
+  add_p(test = all_continuous() ~ "t.test",
+        pvalue_fun = ~style_pvalue(.x, digits = 3))
+breed_tbl_16s
+```
+
+## Chosen 24 animals
+
+```{r meta_basics_breed_24}
+breed_tbl_24 <- sc_meta_ch24 %>%
+  gtsummary::select(liveweight, age_start_performance_test,
+                    performance_test_lwg, performance_test_dmi,
+                    fcr, ch4_g_kg_dmi, breed) %>%
+  tbl_summary(
+    by = breed,
+     missing = "no") %>%
+  add_p(test = all_continuous() ~ "t.test",
+        pvalue_fun = ~style_pvalue(.x, digits = 3))
+breed_tbl_24
+```
+
+## Both together
+
+Combine tables and export.
+
+```{r meta_basics_breed_combo}
+# Combine tables
+breed_tbl_both <- tbl_merge(
+  list(breed_tbl_16s,
+       breed_tbl_24),
+  tab_spanner = c("Animals with amplicon data",
+                  "Animals with multi-omic data"))
+breed_tbl_both_gt <- as_gt(breed_tbl_both)
+
+# Set better variable names
+breed_tbl_both_gt <- breed_tbl_both_gt %>%
+  text_case_match(
+    "liveweight" ~ "Liveweight (kg)",
+    "age_start_performance_test" ~ "Age (days) at start of performance test",
+    "performance_test_lwg" ~ "ADG",
+    "performance_test_dmi" ~ "DMI",
+    "fcr" ~ "FCR",
+    "ch4_g_kg_dmi" ~ "CH4 (g/kg/DMI)")
+breed_tbl_both_gt
+
+# export as docx
+gt::gtsave(breed_tbl_both_gt, filename = "../results/tables/supacow_tbl1.docx")
+```

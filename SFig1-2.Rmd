@@ -1,0 +1,539 @@
+---
+title: "| Extended Data Fig 1 + 2 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+mainfont: Arial
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("flextable")
+library("officer")
+library("lubridate")
+library("Hmisc")
+library("cowplot")
+library("gridExtra")
+library("ggpubr")
+library("phyloseq")
+library("vegan")
+library("ape")
+library("openxlsx")
+library("rstatix")
+
+# Additional functions
+source("fig_functions.R")
+
+# Colors for variables of interest
+sc_cols <- list(
+               ch4_dmi_binary = c("#b4eeb4", "#00008b"),
+               treatment = c("#BFBFBF", "#8B668B"),
+               breed = c("#FFA07A", "#6E7B8B"),
+               pen = c("#a0e3b7", "#752e4f", "#afe642", "#633ca3", "#5b8313", "#b472f2"),
+               sire = c("#40655e", "#cad3fa", "#1f4196", "#49c32f",
+                        "#b859e4", "#99b656", "#4f28af"),
+               slaughter_group = c("#40655e", "#cad3fa", "#1f4196", "#49c32f",
+                                   "#b859e4", "#99b656", "#4f28af", "#BFBFBF"),
+               delivery_batch = c("gray90", "hotpink2"),
+               RCT = c("#bfbfbf", "#49ad8b"))
+```
+
+```{r metadata_setup}
+# Metadata setup
+
+# All animals in the experiment
+sc_meta_full <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                           sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+
+# Animals with 16S amplicon data
+dnas_16s_meta <- read.csv("../data/16S/dnasense_meta.csv")
+dnas_16s_meta$animal <- as.numeric(sub("A", "", dnas_16s_meta$Animal))
+sc_meta_16s <- subset(sc_meta_full, animal %in% unique(dnas_16s_meta$animal))
+
+# 24 animals with multiomic data
+sc_meta_ch24 <- subset(sc_meta_full, chosen_24 == TRUE)
+
+# Variables for testing
+stat_test_vars <- c("treatment", "breed", "sire",
+                    "performance_test_end_date", "age_start_performance_test",
+                    "performance_test_lwg", "performance_test_dmi",
+                    "fcr", "liveweight", "ch4_g_day", "ch4_g_kg_dmi",
+                    "ch4_dmi_binary", "birth_month", "pen",
+                    "slaughter_group", "sample_storage_bag",
+                    "delivery_batch")
+```
+
+# SFig1: Basic microbiome comparisons
+
+## 16S amplicon data setup
+
+```{r amplicon_ordination}
+# Import 16S count data
+dada2_16s <- read.csv("../data/16S/tax_counts_GTDBref.csv",
+                      row.names = 1)
+dada2_counts <- dada2_16s[,grep("MQ", colnames(dada2_16s))]
+
+# Fix sample names
+dnas_meta <- read.csv("../data/16S/dnasense_meta.csv")
+dnas_meta$ampliconSample <- make.names(dnas_meta$seqID)
+rownames(dnas_meta) <- dnas_meta[,"ampliconSample"]
+colnames(dada2_counts) <- dnas_meta[colnames(dada2_counts), "sampleName"]
+
+# Trim rare ASVs
+dada2_counts_trim <- dada2_counts[
+  rowSums(dada2_counts > 0) > round(ncol(dada2_counts)/10),]
+# Trim to T6
+dada2_counts_T6 <- dada2_counts_trim[,grep("T6", colnames(dada2_counts_trim))]
+# Drop any zero taxa after timepoint trim
+dada2_counts_T6 <- dada2_counts_T6[rowSums(dada2_counts_T6) > 0, ]
+
+# Set up taxon details
+dada2_tax <- as.matrix(dada2_16s[rownames(dada2_counts_T6), 1:8])
+dada2_tax[is.na(dada2_tax)] <- "unclassified"
+dada2_tax[,"Species"] <- paste(dada2_tax[,"Genus"],
+                               dada2_tax[,"Species.1"])
+dada2_tax[,"Species"] <- sub(" unclassified", " sp",
+                             sub("unclassified unclassified",
+                             "unclassified", dada2_tax[,"Species"]))
+dada2_tax <- dada2_tax[,colnames(dada2_tax) != "Species.1"] 
+
+# Set up metadata with sample names
+meta_df_16s <- merge(dnas_16s_meta[,c("sampleName", "seqID", "extID", "libID",
+                                      "concExt", "concAmp", "concLib",
+                                      "animal", "Time", "rawReads", "filtReads")],
+                     sc_meta_16s)
+
+# Import additional metadata from SRUC (batch variables etc)
+sruc_meta <- read.csv("../data/sample_data/sruc_sample_data_t6.csv")
+sruc_meta$hoko_id <- sruc_meta$Barcode
+# Merge, keeping only the animals in 16S data
+meta_df_16s <- merge(sruc_meta, meta_df_16s)
+rownames(meta_df_16s) <- meta_df_16s$sampleName
+  
+# Birth month variable
+meta_df_16s$birth_month <- factor(lubridate::month(as.Date(meta_df_16s$dob), label = TRUE))
+
+# Slaugther group
+meta_df_16s$slaughter_group <- factor(meta_df_16s$Group)
+# NB: identical variables:
+# sub.project.details == group == date.of.sample == date.into.freezer
+
+# Performance test end date (there are only two alternatives)
+meta_df_16s$performance_test_end_date <- factor(meta_df_16s$performance_test_end_date)
+levels(meta_df_16s$performance_test_end_date) <- c("early", "late")
+
+# Sample storage bag
+meta_df_16s$sample_storage_bag <- factor(meta_df_16s$Comments)
+levels(meta_df_16s$sample_storage_bag) <- c("bag1", "bag2")
+
+# Delivery to NMBU (one missing value)
+meta_df_16s$delivery_batch <- meta_df_16s$Out.of.Freezer
+meta_df_16s[meta_df_16s$delivery_batch == "", "delivery_batch"] <- NA
+meta_df_16s$delivery_batch <- factor(meta_df_16s$delivery_batch )
+levels(meta_df_16s$delivery_batch) <- c("batch1", "batch2")
+
+# Some additional factorizing of variables
+meta_df_16s$pen <- factor(meta_df_16s$updated_pen)
+meta_df_16s$sire <- factor(meta_df_16s$sire) 
+
+# Set up phyloseq object
+asv_phy_t6 <- phyloseq(
+  otu_table(dada2_counts_T6, taxa_are_rows = TRUE),
+  tax_table(dada2_tax),
+  sample_data(meta_df_16s[colnames(dada2_counts_T6),]))
+```
+
+## Panel a: Alpha diversity
+
+```{r adiv_setup, fig.width=10, fig.height=3}
+# Choose alpha diversity indices to use
+adiv_ind <- c("Observed", "Shannon", "InvSimpson")
+
+# Calculate index values + merge with metadata
+asv_t6_adiv <- cbind(
+  estimate_richness(asv_phy_t6, measures = adiv_ind),
+  sample_data(asv_phy_t6))
+
+# Visual check for outliers
+plot_grid(plotlist = lapply(adiv_ind, function(ind)
+  ggplot(asv_t6_adiv, aes(x = sampleName, y = !!sym(ind))) +
+    geom_point(size = 0.5) + theme_bw(base_size = 8) +
+    xlab("Sample") +
+    theme(panel.grid = element_blank(),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank())),
+  nrow = 1)
+```
+
+```{r adiv_comp_func}
+# Custom function for alpha diversity stats
+adiv_comp <- function(adiv_df, vars, div_vars){
+  
+  # Calculate correlations for numeric variables
+  num_vars <- names(which(sapply(adiv_df[,vars], is.numeric)))
+  div_cors_num <- do.call("rbind", sapply(num_vars, function(x){
+      lapply(div_vars, function(div){
+        res <- cor.test(adiv_df[,x], adiv_df[,div], method = "pearson")
+        data.frame(Variable = x,
+                   Index = div,
+                   Statistic = res$statistic,
+                   p = res$p.value,
+                   r = res$estimate,
+                   ci = paste(round(res$conf.int, digits = 3), collapse = ", "),
+                   Test = "Pearson")
+      })
+    }))
+  
+  # Calculate wilcoxon or kruskal for categorical variables
+  cat_vars <- names(which(sapply(adiv_df[,vars], is.factor)))
+  div_comp_cat <- do.call(
+    "rbind", sapply(cat_vars, function(x){
+      if(length(levels(adiv_df[[x]])) == 2){
+        lapply(div_vars, function(div){
+          res <- wilcox.test(as.formula(paste(div, "~", x)), adiv_df)
+          data.frame(
+            Variable = x,
+            Index = div,
+            Statistic = res$statistic,
+            p = res$p.value,
+            Test = "Wilcoxon")})
+      } else {
+        lapply(div_vars, function(div){
+          res <- kruskal.test(as.formula(paste(div, "~", x)), adiv_df)
+          data.frame(
+            Variable = x,
+            Index = div,
+            Statistic = res$statistic,
+            p = res$p.value,
+            Test = "Kruskal")})
+      }}))
+  
+  # Combine
+  merge(div_cors_num, div_comp_cat,
+        all.x = TRUE, all.y = TRUE)
+}
+```
+
+```{r adiv_stats}
+# Calculate statistics
+asv_t6_adiv_res <- adiv_comp(asv_t6_adiv, stat_test_vars, adiv_ind)
+
+# Anything significant? (NB: uncorrected p-values!)
+subset(asv_t6_adiv_res, p < 0.1)
+
+# Export results (as part of excel workbook)
+amplicon_results_export <- createWorkbook()
+addWorksheet(amplicon_results_export, "alpha_diversity")
+writeData(amplicon_results_export,
+          "alpha_diversity",
+          asv_t6_adiv_res)
+```
+
+```{r adiv_plots, fig.width=7, fig.height=5}
+# Example plots for alpha diversity
+adiv_plots_sh <- lapply(c("treatment", "breed", "ch4_dmi_binary"), function(x)
+  box_dot_plot(asv_t6_adiv, x, "Shannon", sc_cols[[x]]) +
+    ggtitle("") +
+    stat_compare_means(size = 2, label.x.npc = 0.5, hjust = "center"))
+adiv_plots_sh[[1]] <- adiv_plots_sh[[1]] + ggtitle("a")
+
+adiv_plots_is <- lapply(c("treatment", "breed", "ch4_dmi_binary"), function(x)
+  box_dot_plot(asv_t6_adiv, x, "InvSimpson", sc_cols[[x]]) +
+    ggtitle("") +
+    stat_compare_means(size = 2, label.x.npc = 0.5, hjust = "center"))
+
+adiv_plots_grid <- plot_grid(plotlist = c(adiv_plots_sh,
+                                          adiv_plots_is),
+                             nrow = 2, align = "hv")
+```
+
+## Panel b: Beta diversity
+
+```{r bdiv_comp_adonis}
+# Adonis/PERMANOVA for beta diversity
+# (simple comparison - each variable on its own)
+bdiv_comp <- function(phylo_obj, vars){
+
+  ad_res <- sapply(vars, function(x){
+
+    meta_df <- as(sample_data(phylo_obj), "data.frame")
+    meta_df <- meta_df[!is.na(meta_df[,x]),]
+    
+    count_df <-  as.data.frame(t(as(otu_table(phylo_obj), "matrix")))
+    count_df <- count_df[rownames(meta_df),]
+    
+    dist <- vegdist(count_df, method = "bray")
+    
+    unlist(adonis2(as.formula(paste("dist ~", x)),
+                       data = meta_df,
+                       perm = 9999)[x,])
+    })
+  
+  as.data.frame(t(ad_res))
+}
+
+# Calculate statistics
+asv_t6_bdiv_res <- bdiv_comp(asv_phy_t6, stat_test_vars)
+asv_t6_bdiv_res[order(asv_t6_bdiv_res$`Pr(>F)`),]
+
+# Export results
+addWorksheet(amplicon_results_export, "beta_diversity")
+writeData(amplicon_results_export, "beta_diversity",
+          asv_t6_bdiv_res, rowNames = TRUE)
+
+saveWorkbook(amplicon_results_export,
+             "../results/supp_tables/16S_diversity_results.xlsx",
+             overwrite = TRUE)
+```
+
+```{r bdiv_plots, fig.width=7, fig.height=7}
+# Plots for the 3 main variables + 3 variables with the lowest p from adonis
+
+# Ordinate
+asv_phy_t6_ord <- roba_ord(asv_phy_t6)
+
+# Make data frame with first 2 axes
+asv_phy_t6_pcoa_df <- cbind(asv_phy_t6_ord$pcoa$vectors[,1:2],
+                            sample_data(asv_phy_t6))
+
+# Categorical variable for weight for better visualization
+asv_phy_t6_pcoa_df$weight_category <- cut(asv_phy_t6_pcoa_df$liveweight, breaks = 4)
+sc_cols$weight_category <- gray.colors(4, 0.2, 0.9)
+asv_t6_bdiv_res <- rbind(
+  asv_t6_bdiv_res,
+  weight_category = asv_t6_bdiv_res["liveweight",]
+)
+
+# Put together plots
+bdiv_plots <- lapply(
+  c("treatment", "breed", "ch4_dmi_binary",
+    "weight_category", "slaughter_group", "delivery_batch"), function(x)
+      ggplot(data = asv_phy_t6_pcoa_df,
+             aes(x = Axis.1, y = Axis.2,
+                 fill = !!sym(x), shape = !!sym(x))) +
+    geom_point(size = 2) +
+    theme_bw(base_size = 8) +
+    coord_fixed() +
+    scale_fill_manual(values = sc_cols[[x]],
+                      name = sub("Ch4", "CH4",
+                                 gsub("_", " ", capitalize(x)))) +
+    scale_shape_manual(values = c(21, 24, 22, 23, 25,
+                                  21, 24, 22),
+                       na.value = 25,
+                       name = sub("Ch4", "CH4",
+                                 gsub("_", " ", capitalize(x)))) +
+    guides(fill = guide_legend(ncol = 3)) +
+    ggtitle("") +
+    theme(panel.grid = element_blank(),
+          legend.position = "bottom",
+          legend.title.position = "top",
+          legend.margin = margin(-2, 0, 1, 0),
+          legend.key.height = unit(1, "mm"),
+          plot.title =  element_text(face = "bold", size = 12)) +
+    labs(caption = paste("p (PERMANOVA) = ",
+                         signif(asv_t6_bdiv_res[x, "Pr(>F)"],
+                                digits = 2))))
+bdiv_plots[[1]] <- bdiv_plots[[1]] + ggtitle("b")
+
+bdiv_plots_grid <- plot_grid(plotlist = bdiv_plots,
+                             nrow = 2, align = "hv", axis = "bl")
+```
+
+## Combined
+
+```{r sfig1, fig.width=7, fig.height=12}
+plot_grid(
+  adiv_plots_grid,
+  bdiv_plots_grid,
+  ncol = 1, rel_heights = c(2, 3))
+```
+
+# SFig2: 16S amplicons, metadata and rumen community types
+
+## Panel a: Comparisons between RCT groups
+
+```{r split_stats}
+# Trim metadata to T6 only (to include each animal just once)
+meta_df_16s_t6 <- subset(meta_df_16s, Time == "T6")
+
+# Calculate simple stats for various potentially relevant variables
+split_var_p <- do.call("rbind", lapply(stat_test_vars, function(x) {
+         if(is.numeric(meta_df_16s_t6[,x])){
+           res <- t.test(as.formula(paste(x, "~RCT")), meta_df_16s_t6)
+           data.frame(
+             Variable = x,
+             p = res$p.value,
+             Statistic = res$statistic,
+             RCT.A_mean = res$estimate[1],
+             RCT.B_mean = res$estimate[2],
+             Effect_size = cohens_d(meta_df_16s_t6,
+                                    as.formula(paste(x, "~RCT")))$effsize,
+           Test = "t-test")
+         } else {
+           data.frame(
+             Variable = x,
+             p = fisher.test(meta_df_16s_t6[,x],
+                             meta_df_16s_t6[,"RCT"],
+                           simulate.p.value = TRUE)$p,
+             Statistic = NA,
+             RCT.A_mean = NA,
+             RCT.B_mean = NA,
+             Effect_size = NA,
+             Test = "Fisher")
+         }}))
+
+# Better variable names
+split_var_p[!(split_var_p$Variable %in% names(sc_vars)), "Variable"] <-
+  capitalize(
+    gsub("_", " ", split_var_p[!(split_var_p$Variable %in% names(sc_vars)), "Variable"])
+  )
+split_var_p[split_var_p$Variable %in% names(sc_vars), "Variable"] <-
+  sc_vars[split_var_p[split_var_p$Variable %in% names(sc_vars), "Variable"]]
+
+# Organize as flextable
+split_var_p_flx <- flextable(split_var_p) %>%
+  colformat_double(j = c("p", "Statistic", "Effect_size"), digits = 3) %>%
+  colformat_double(j = c("RCT.A_mean", "RCT.B_mean"), digits = 2) %>%
+  set_header_labels(values = list(
+    RCT.A_mean = "RCT-A mean",
+    RCT.B_mean = "RCT-B mean",
+    Effect_size = "Effect size")) %>%
+  width(j = 1, 2, unit = "in")
+
+# Convert to grob for plotting
+split_var_p_grob <- split_var_p_flx %>%
+  line_spacing(space = 1, part = "header") %>%
+  align(part = "all", align = "center") %>%
+  hline(part = "all",
+        border = fp_border(color = "gray")) %>%
+  padding(padding = 0, part = "all") %>%
+  gen_grob()
+```
+
+## Panel b: Ordination for time series data and RCTs
+
+```{r split_16s_time, fig.width=7, fig.height=5}
+# Set up phyloseq for all timepoints
+sc_meta_ts <- data.frame(
+  row.names = colnames(dada2_counts_trim),
+  sample = colnames(dada2_counts_trim),
+  timepoint = sub(".*T", "T", colnames(dada2_counts_trim)),
+  animal = as.numeric(sub("D", "", sub("T.*", "", colnames(dada2_counts_trim))))
+)
+sc_meta_ts <- merge(sc_meta_ts, sc_meta_full, by = "animal")
+rownames(sc_meta_ts) <- sc_meta_ts$sample
+
+asv_phy_all <- phyloseq(
+  otu_table(dada2_counts_trim, taxa_are_rows = TRUE),
+  tax_table(as.matrix(dada2_16s[rownames(dada2_counts_trim), 1:8])),
+  sample_data(sc_meta_ts[colnames(dada2_counts_trim),]))
+
+# Calculate ordination
+pcoa_asv_all <- roba_ord(asv_phy_all)
+
+# Data frame with first 2 axes
+pcoa_asv_ts_df <- cbind(pcoa_asv_all$pcoa$vectors[,1:2],
+                        sample_data(asv_phy_all))
+# Order by timepoint
+pcoa_asv_ts_df <- pcoa_asv_ts_df[order(pcoa_asv_ts_df$timepoint),]
+
+# Plot with RCT colors
+asv_ts <- ggplot(pcoa_asv_ts_df,
+                 aes(x = Axis.1, y = Axis.2,
+                     label = sub("T", "", timepoint),
+                     group = animal)) +
+  geom_path(alpha = 0.6, aes(color = RCT)) +
+  geom_text(aes(size = chosen_24, color = RCT)) +
+  facet_wrap(~breed) +
+  theme_bw(base_size = 10) +
+  coord_fixed() +
+  ggtitle("b") +
+  stat_ellipse(inherit.aes = FALSE,
+               aes(x = Axis.1, y = Axis.2,
+                   linetype = (timepoint == "T6"))) +
+  scale_alpha_manual(values = c(0.6, 1),
+                     labels = c("no", "yes"),
+                     name = "Chosen 24") +
+  scale_size_manual(values = c(2.5, 4),
+                    labels = c("no", "yes"),
+                    name = "Chosen 24") +
+  scale_linetype_manual(values = c(2, 1),
+                        name = "Sampling method",
+                        labels = c("tube", "slaughter")) +
+  scale_color_manual(values = c("gray50",
+                                sc_cols$RCT[2]),
+                     name = "Rumen\ncommunity\ntype") +
+  theme(panel.grid = element_blank(),
+        strip.background = element_rect(fill = "white"),
+        plot.title =  element_text(face = "bold", size = 12))
+```
+
+## Panel c: Ordination for time series data and seaweed treatment
+
+```{r time_and_treatment, fig.width=7, fig.height=3}
+# Visualizing treatment effect (or lack thereof):
+
+# Simplified variable for timepoints before/after seaweed
+pcoa_asv_ts_df$seaweed_time <- ifelse(pcoa_asv_ts_df$timepoint == "T1",
+                                      "Treatment, T1\n(before seaweed)",
+                                      "Treatment, T2-5\n(after seaweed)")
+pcoa_asv_ts_df[pcoa_asv_ts_df$treatment == "control",
+               "seaweed_time"] <- "Control\n(all timepoints)"
+pcoa_asv_ts_df$seaweed_time <- factor(pcoa_asv_ts_df$seaweed_time,
+                                      levels = c("Control\n(all timepoints)",
+                                                 "Treatment, T1\n(before seaweed)",
+                                                 "Treatment, T2-5\n(after seaweed)"))
+
+# Plot with the binary timepoint label,
+# show chosen 24, tube sampled only (for clarity/simplicity)
+asv_ts_treat <- ggplot(subset(pcoa_asv_ts_df,
+                              timepoint != "T6" & chosen_24 == TRUE),
+                 aes(x = Axis.1, y = Axis.2,
+                     label = sub("T", "", timepoint),
+                     color = seaweed_time,
+                     size = seaweed_time)) +
+  theme_bw(base_size = 10) +
+  geom_path(alpha = 0.6, aes(group = animal), color = "gray80",
+            linewidth = 0.25) +
+  geom_text() +
+  coord_fixed() +
+  ggtitle("c") +
+  facet_grid(~breed+treatment) +
+  scale_color_manual(values = c("gray50", "violetred4", "plum"),
+                     name = "Group and\ntimepoint") +
+  scale_size_manual(values = c(2, 3, 2),
+                    name = "Group and\ntimepoint") +
+  theme(panel.grid = element_blank(),
+        strip.background = element_rect(fill = "white"),
+        plot.title =  element_text(face = "bold", size = 12),
+        legend.position = "bottom")
+```
+
+## Combined
+
+```{r sfig2, fig.width=7, fig.height=10}
+library("grid")
+
+plot_grid(
+  arrangeGrob(
+    top = textGrob("a", x = unit(1, "mm"),
+                   gp = gpar(fontsize = 11, font = 2, align = "left")),
+    split_var_p_grob),
+  ggplot() +
+    theme_void(),
+  asv_ts,
+  asv_ts_treat,
+  ncol = 1, rel_heights = c(4, 0.25, 3.25, 3))
+```

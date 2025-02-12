@@ -1,0 +1,798 @@
+---
+title: "| Fig2 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+mainfont: Arial
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("data.table")
+library("Hmisc")
+library("gtools")
+library("ggtext")
+library("gridExtra")
+library("cowplot")
+library("reshape2")
+library("ggpubr")
+library("phyloseq")
+library("vegan")
+library("ape")
+library("DESeq2")
+library("openxlsx")
+
+# Custom generic functions
+source("fig_functions.R")
+```
+
+# Panel a (16S ordination)
+
+```{r amplicon_ordination}
+# Import ASV 16S data
+dada2_16s <- read.csv("../data/16S/tax_counts_GTDBref.csv",
+                      row.names = 1)
+dada2_counts <- dada2_16s[,grep("MQ", colnames(dada2_16s))]
+
+# Fix sample names
+dnas_meta <- read.csv("../data/16S/dnasense_meta.csv")
+rownames(dnas_meta) <- make.names(dnas_meta$seqID)
+colnames(dada2_counts) <- dnas_meta[colnames(dada2_counts), "sampleName"]
+rownames(dnas_meta) <- dnas_meta$sampleName
+  
+# Trim rare ASVs
+dada2_counts_trim <- dada2_counts[
+  rowSums(dada2_counts > 0) > round(ncol(dada2_counts)/10),]
+# Trim to T6
+dada2_counts_T6 <- dada2_counts_trim[,grep("T6", colnames(dada2_counts_trim))]
+# Drop any zero taxa
+dada2_counts_T6 <- dada2_counts_T6[rowSums(dada2_counts_T6) > 0, ]
+
+# Set up taxonomy matrix
+dada2_tax <- as.matrix(dada2_16s[rownames(dada2_counts_T6), 1:8])
+dada2_tax[is.na(dada2_tax)] <- "unclassified"
+dada2_tax[,"Species"] <- paste(dada2_tax[,"Genus"],
+                               dada2_tax[,"Species.1"])
+dada2_tax[,"Species"] <- sub(" unclassified", " sp",
+                             sub("unclassified unclassified",
+                             "unclassified", dada2_tax[,"Species"]))
+dada2_tax <- dada2_tax[,colnames(dada2_tax) != "Species.1"] 
+
+# Set up metadata
+sc_meta_full <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                           sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+dnas_meta$animal <- as.numeric(sub("A", "", dnas_meta$Animal))
+meta_df_16s <- merge(dnas_meta,
+                     subset(sc_meta_full, animal %in% unique(dnas_meta$animal)))
+rownames(meta_df_16s) <- meta_df_16s$sampleName
+     
+# Set up phyloseq object
+asv_phy_t6 <- phyloseq(
+  otu_table(dada2_counts_T6, taxa_are_rows = TRUE),
+  tax_table(dada2_tax),
+  sample_data(meta_df_16s[colnames(dada2_counts_T6),]))
+
+# Calculate ordination
+pcoa_asv_res <- roba_ord(asv_phy_t6)
+
+# Data frame with first 2 axes
+pcoa_asv_df <- cbind(pcoa_asv_res$pcoa$vectors[,1:2],
+                     sample_data(asv_phy_t6))
+
+# Plot
+asv_pcoa <- ggplot(data = pcoa_asv_df,
+                   aes(x = Axis.1, y = Axis.2,
+                       shape = RCT, fill = RCT)) +
+  geom_point(size = 2) +
+  theme_bw(base_size = 8) +
+  coord_fixed() +
+  scale_fill_manual(values = RCT_cols, name = "Rumen\nCommunity\nType") +
+  scale_shape_manual(values = RCT_shapes, name = "Rumen\nCommunity\nType") +
+  labs(x = paste("Axis1:", round(pcoa_asv_res$pcoa$values$Relative_eig[1]*100), "% variance"),
+       y = paste("Axis2:", round(pcoa_asv_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
+  theme(panel.grid = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        plot.title =  element_text(face = "bold", size = 12)) +
+  labs(caption = paste("p (PERMANOVA, RCT) = ",
+                       signif(adonis2(pcoa_asv_res[["dist"]]~RCT,
+                               data = as(sample_data(asv_phy_t6), "data.frame"),
+                               perm = 9999)[["Pr(>F)"]][1], digits = 2)))
+```
+
+# Panel b (MAG ordination)
+
+```{r mag_ordination}
+# Import data
+mag_coverm <- read.table("../data/metagenomics/Abundance.coverM.tsv", sep = "\t",
+                         header = TRUE, row.names = 1)
+# Trim to t6
+mag_coverm_t6 <- mag_coverm[, grep("T6", colnames(mag_coverm))]
+
+# Set up relative abundance data
+mag_ra_t6 <- mag_coverm_t6[,grep("Relative.Abundance", colnames(mag_coverm_t6))]
+colnames(mag_ra_t6) <- sub(".R1.*", "", colnames(mag_ra_t6))
+
+# Set up taxonomy
+mag_tax <- read.table("../data/SupaCowTaxTotal.tsv", sep = "\t",
+                      header = TRUE, row.names = 1)
+mag_tax <- mag_tax[rownames(mag_ra_t6),]
+rownames(mag_tax) <- rownames(mag_ra_t6)
+
+# Set up phyloseq object (to harmonize with functions from 16S data)
+mag_phy_t6 <- phyloseq(
+  otu_table(mag_ra_t6, taxa_are_rows = TRUE),
+  tax_table(as.matrix(mag_tax)),
+  sample_data(meta_df_16s[colnames(mag_ra_t6),]))
+
+# Calculate ordination
+pcoa_mag_res <- roba_ord(mag_phy_t6)
+
+# Data frame with first 2 axes
+pcoa_mag_df <- cbind(pcoa_mag_res$pcoa$vectors[,1:2],
+                     sample_data(mag_phy_t6))
+
+# Plot
+mag_pcoa <- ggplot(data = pcoa_mag_df,
+                   aes(x = Axis.1, y = Axis.2,
+                       shape = RCT, fill = RCT)) +
+  geom_point(size = 2) +
+  theme_bw(base_size = 8) +
+  coord_fixed() +
+  scale_fill_manual(values = RCT_cols, name = "RCT\n(from 16S data)") +
+  scale_shape_manual(values = RCT_shapes, name = "RCT\n(from 16S data)") +
+  labs(x = paste("Axis1:", round(pcoa_mag_res$pcoa$values$Relative_eig[1]*100), "% variance"),
+       y = paste("Axis2:", round(pcoa_mag_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
+  theme(panel.grid = element_blank(),
+        legend.box.background = element_rect(color = "black"),
+        plot.title =  element_text(face = "bold", size = 12)) +
+  labs(title = "Digesta, MAGs",
+       caption = paste("p (PERMANOVA, RCT) = ",
+                       signif(adonis2(pcoa_mag_res[["dist"]]~RCT,
+                               data = as(sample_data(mag_phy_t6), "data.frame"),
+                               perm = 9999)[["Pr(>F)"]][1], digits = 2)))
+```
+
+# Panels c-f
+
+## Meta/host transcriptomics
+
+### Digesta
+
+```{r mt_dig_pca}
+# Import digesta data
+mt_df <- fread("../data/transcriptomics/MetaT.RawCounts.Annotated.zerotrim.csv",
+               data.table = FALSE)
+rownames(mt_df) <- mt_df$Gene_ID
+
+# Trim to t6 counts
+mt_df_t6 <- mt_df[, grep("T6", colnames(mt_df))]
+# Trim features with no non-zero values after timepoint trim
+mt_df_t6 <- mt_df_t6[rowSums(mt_df_t6) > 0,]
+# Normalize with DESeq2 VST
+mt_df_t6_dds <- DESeqDataSetFromMatrix(countData = mt_df_t6,
+                                       colData = meta_df_16s[colnames(mt_df_t6),],
+                                       design = ~ 1)
+mt_df_t6_vst <- varianceStabilizingTransformation(mt_df_t6_dds)
+
+# Trim to top 1000 features by variance (similar to plotPCA in DESEq2)
+mt_df_t6_vst_rv <- rowVars(assay(mt_df_t6_vst))
+mt_df_t6_top_features <- t(assay(mt_df_t6_vst)[order(mt_df_t6_vst_rv, decreasing = TRUE)[1:1000],])
+
+# Calculate PCA and plot
+mt_dig_pca_res <- prcomp(mt_df_t6_top_features, scale = FALSE)
+```
+
+### Rumen epithelium
+
+```{r mt_wall_pcas}
+# Import wall data
+
+# Metadata
+mt_meta <- read.csv("../data/transcriptomics/2023-7-12_CP958d_meta.csv")
+w_mt_meta <- subset(mt_meta, sampleMaterial == "wall")
+w_mt_meta$animal <- as.numeric(sub("A", "", w_mt_meta$Animal))
+w_mt_meta <- merge(w_mt_meta,
+                   sc_meta_full,
+                   by = "animal")
+rownames(w_mt_meta) <- make.names(w_mt_meta$seqID)
+
+# Host data
+mt_w_host <- data.frame(
+  fread("../data/transcriptomics/FeatureCount_CP958d_host.txt"),
+  row.names = 1)
+mt_w_host <- mt_w_host[,rownames(w_mt_meta)]
+# Trim any zero rows
+mt_w_host <- mt_w_host[rowSums(mt_w_host) > 0,]
+
+# Microbiome data
+mt_w_micro <- data.frame(
+  fread("../data/transcriptomics/FeatureCount_CP958d_microbiome_noHeader.txt"),
+  row.names = 1)
+mt_w_micro <- mt_w_micro[,rownames(w_mt_meta)]
+# Trim any zero rows
+mt_w_micro <- mt_w_micro[rowSums(mt_w_micro) > 0,]
+
+# Switch to sample names
+rownames(w_mt_meta) <- colnames(mt_w_host) <- colnames(mt_w_micro) <- w_mt_meta$sampleName
+  
+# Make VST transformed DS2 objects
+mt_w_micro_vst <- varianceStabilizingTransformation(
+  DESeqDataSetFromMatrix(countData = mt_w_micro,
+                         colData = w_mt_meta,
+                         design = ~ 1))
+mt_w_host_vst <- varianceStabilizingTransformation(
+  DESeqDataSetFromMatrix(countData = mt_w_host,
+                         colData = w_mt_meta,
+                         design = ~ 1))
+
+# Calculate PCAs
+mt_wall_micro_pca_res <- prcomp(
+  t(assay(mt_w_micro_vst)[
+    order(rowVars(assay(mt_w_micro_vst)),
+          decreasing = TRUE)[1:1000],]), scale = FALSE)
+mt_wall_host_pca_res <- prcomp(
+  t(assay(mt_w_host_vst)[
+    order(rowVars(assay(mt_w_host_vst)),
+          decreasing = TRUE)[1:1000],]), scale = FALSE)
+```
+
+### Liver (host transcriptomics)
+
+```{r mt_liver_ord}
+# Import liver data
+
+# Metadata
+liver_mt_meta <- subset(mt_meta, sampleMaterial == "liver")
+liver_mt_meta$animal <- as.numeric(sub("A", "", liver_mt_meta$Animal))
+liver_mt_meta <- merge(liver_mt_meta, sc_meta_full, by = "animal")
+rownames(liver_mt_meta) <- make.names(liver_mt_meta$seqID)
+
+# Count data
+mt_liver <- data.frame(
+  fread("../data/transcriptomics/FeatureCount_CP958d_host.txt"),
+  row.names = 1)
+mt_liver <- mt_liver[,rownames(liver_mt_meta)]
+# Trim any zero rows
+mt_liver <- mt_liver[rowSums(mt_liver) > 0,]
+
+# Switch to sample names
+rownames(liver_mt_meta) <- colnames(mt_liver) <- liver_mt_meta$sampleName
+  
+# Make VST normalized DS2 object
+mt_liver_vst <- varianceStabilizingTransformation(
+  DESeqDataSetFromMatrix(countData = mt_liver,
+                         colData = liver_mt_meta,
+                         design = ~ 1))
+
+# Calculate PCA and plot
+mt_liver_pca_res <- prcomp(
+  t(assay(mt_liver_vst)[
+    order(rowVars(assay(mt_liver_vst)),
+          decreasing = TRUE)[1:1000],]), scale = FALSE)
+```
+
+## Meta/host proteomics
+
+### Digesta
+
+```{r proteomic_import}
+# Import data
+mp_all <- as.data.frame(readRDS("../data/proteomics/imputation_long_v2.rds"))
+```
+
+```{r mp_dig_split}
+# Subset to group_index == 9: digesta from slaughter, imputed for both breeds together
+mp_dig_pca_res <- prot_to_pca(mp_all, 9)
+```
+
+### Rumen epithelium
+
+**Microbiome**
+
+```{r mp_wall_micro_pca}
+# Subset to group_index == 12: wall, imputed for both breeds together,
+# cow reference (dbB) NOT included
+mp_wall_micro_pca_res <- prot_to_pca(subset(mp_all, database != "dbB"), 12)
+```
+
+**Host**
+
+```{r mp_wall_host_pca}
+# Subset to group_index == 12: wall, imputed for both breeds together, only cow (dbB)
+mp_wall_host_pca_res <- prot_to_pca(subset(mp_all, database == "dbB"), 12)
+```
+
+### Liver
+
+```{r mp_liver_pca}
+# Subset to group_index == 11: liver, imputed for both breeds together
+mp_liver_pca_res <- prot_to_pca(mp_all, 11)
+```
+
+## Metabolomics
+
+### Digesta
+
+```{r mb_dig}
+# Import intensities
+dig_mb <- as.data.frame(
+  readRDS("../data/metabolomics/10_MSOmics_abundances_rect_post.rds"))
+rownames(dig_mb) <- dig_mb$compound_number
+dig_mb_df <- dig_mb[,grep("^D", colnames(dig_mb))]
+dig_mb_df <- t(dig_mb_df)
+
+# Organize metadata
+mb_meta_df <- data.frame(sample = rownames(dig_mb_df),
+                         animal = as.numeric(substr(rownames(dig_mb_df), 2, 3)))
+mb_meta_df <- merge(mb_meta_df, sc_meta_full, by = "animal")
+rownames(mb_meta_df) <- mb_meta_df$sample
+
+# Trim to annotation level above 3
+dig_mb_trim <- subset(dig_mb, annotation_level != "3")
+dig_mb_df <- dig_mb_df[,rownames(dig_mb_trim)]
+
+# Calculate and plot;
+# with scaling, since unlike the other data types, that isn't implemented separately
+mb_dig_pca_res <- prcomp(dig_mb_df, scale = TRUE)
+```
+
+### Rumen wall
+
+```{r mb_wall}
+# Import intensity data
+mb_other_df <- read.csv("../data/metabolomics/2023-04-03_mb_wall_t6_pqn_areas.csv",
+                         row.names = 1)
+
+# Import and set up metadata
+mb_other_meta <- read.csv("../data/metabolomics/2023-04-05_mb_meta.csv", row.names = 1)
+colnames(mb_other_meta) <- tolower(colnames(mb_other_meta))
+mb_other_meta$treatment <- tolower(mb_other_meta$treatment)
+mb_other_meta$MSOmics_sample <- rownames(mb_other_meta)
+mb_other_meta <- merge(mb_other_meta,
+                       sc_meta_full,
+                       all.x = TRUE)
+rownames(mb_other_meta) <- mb_other_meta$MSOmics_sample
+
+# Drop blanks & other sample types & match to metadata
+mb_wl_meta <- subset(mb_other_meta, !is.na(animal) & tissue == "wall")
+mb_wall_df <- mb_other_df[rownames(mb_wl_meta),]
+rownames(mb_wall_df) <- rownames(mb_wl_meta) <- mb_wl_meta$sample
+
+# Calculate PCA
+mb_wall_pca_res <- prcomp(mb_wall_df, scale = TRUE)
+```
+
+### Liver
+
+```{r mb_liver}
+# Import intensity data
+mb_liver_data <- read.csv("../data/metabolomics/2023-04-03_mb_liver_t6_pqn_areas.csv",
+                          row.names = 1)
+
+# Drop blanks & other sample types & match to metadata
+mb_liver_meta <- subset(mb_other_meta, !is.na(animal) & tissue == "liver")
+mb_liver_df <- mb_liver_data[rownames(mb_liver_meta),]
+rownames(mb_liver_df) <- rownames(mb_liver_meta) <- mb_liver_meta$sample
+
+# Calculate PCA
+mb_liver_pca_res <- prcomp(mb_liver_df, scale = TRUE)
+```
+
+## Selection of PCs linked to community type in each layer
+
+```{r top_split_pca_calc}
+# List of PCAs by data type
+all_pcas_list <- list(
+   Digesta_metatranscriptomics = mt_dig_pca_res,
+   Digesta_metaproteomics = mp_dig_pca_res,
+   Digesta_metabolomics = mb_dig_pca_res,
+   Wall_metatranscriptomics = mt_wall_micro_pca_res,
+   Wall_metaproteomics = mp_wall_micro_pca_res,
+   Wall_transcriptomics = mt_wall_host_pca_res,
+   Wall_proteomics = mp_wall_host_pca_res,
+   Wall_metabolomics = mb_wall_pca_res,
+   Liver_transcriptomics = mt_liver_pca_res,
+   Liver_proteomics = mp_liver_pca_res,
+   Liver_metabolomics = mb_liver_pca_res)
+
+# Calculate stats for Rumen Community Types vs all PCs per data type
+pcs_vs_RCT <- sapply(1:length(all_pcas_list), function(x){
+  
+  df <- as.data.frame(all_pcas_list[[x]][["x"]])
+  df$animal <- as.numeric(
+    substr(sub("R$", "", sub("T6", "", rownames(df))), start = 2, stop = 3))
+  df <- merge(df, sc_meta_full, by = "animal")
+    
+  sapply(grep("PC", colnames(df), value = TRUE), function(y)
+    t.test(as.formula(paste(y, "~ RCT")), df)$p.value)
+  })
+names(pcs_vs_RCT) <- names(all_pcas_list)
+
+# Any axes with p < 0.1 for split per data type?
+sapply(pcs_vs_RCT, function(x)
+  paste(names(which(x < 0.1)), collapse = ","))
+```
+
+Plot the earliest PC with p < 0.1 for RCT from each data type as a boxplot:
+
+```{r top_pc_boxes}
+# Select PCs to plot
+split_pcs <- sapply(pcs_vs_RCT, function(x)
+  names(which(x < 0.1))[1])
+split_pcs <- split_pcs[!is.na(split_pcs)]
+
+# Set up data frame with information from each PC and
+# manually picked groupings & order for visualization
+split_pc_vals <- do.call("rbind",
+  lapply(1:length(split_pcs), function(x){
+    df <- data.frame(
+      sample = rownames(all_pcas_list[[names(split_pcs)[x]]][["x"]]),
+      PC_values = all_pcas_list[[names(split_pcs)[x]]][["x"]][,split_pcs[x]])
+    df$PC <- split_pcs[x]
+    df$data <- names(split_pcs)[x]
+    df$sample_type <- sub("_.*", "", names(split_pcs)[x])
+    df$measurement <- capitalize(sub(".*_", "", names(split_pcs)[x]))
+    df$plot_grouping <- ifelse(df$measurement %in%
+                                 c("Metatranscriptomics", "Metaproteomics"),
+                                      "Metaomics",
+                                      ifelse(
+                                        df$measurement %in%
+                                          c("Transcriptomics", "Proteomics"),
+                                        "Host omics",
+                                        ifelse(df$data == "Liver_metabolomics",
+                                                 "Host omics", "Metaomics")))
+    df$animal <- as.numeric(
+      substr(sub("R$", "", sub("T6", "", df$sample)), start = 2, stop = 3))
+  df <- merge(df, sc_meta_full[,c("animal", "RCT")], by = "animal")
+  }))
+split_pc_vals$plot_grouping <- factor(split_pc_vals$plot_grouping,
+                                      levels = c("Metaomics", "Host omics"))
+
+# Set up further variables for plot ordering
+split_pc_vals$sampletype_PC <- paste(split_pc_vals$sample_type,
+                                     split_pc_vals$PC, sep = "\n")
+split_pc_vals$sampletype_PC <- factor(split_pc_vals$sampletype_PC,
+                                levels = c(
+                                  unique(grep("Digesta", split_pc_vals$sampletype_PC, value = TRUE)),
+                                  unique(grep("Wall", split_pc_vals$sampletype_PC, value = TRUE)),
+                                  unique(grep("Liver", split_pc_vals$sampletype_PC, value = TRUE))))
+
+split_pc_vals$data_PC <- sub("_", "\n", paste(split_pc_vals$data,
+                                              split_pc_vals$PC, sep = "\n"))
+split_pc_vals$data_PC <- factor(
+  split_pc_vals$data_PC,
+  levels = c(
+    unique(grep("transcriptomics", split_pc_vals$data_PC,
+                ignore.case = TRUE, value = TRUE)),
+    unique(grep("proteomics", split_pc_vals$data_PC,
+                ignore.case = TRUE, value = TRUE)),
+    unique(grep("metabolomics", split_pc_vals$data_PC,
+                ignore.case = TRUE, value = TRUE))))
+
+# Set up p-value stars (and position manually)
+split_pc_vals$pval <- sapply(1:nrow(split_pc_vals), function(x)
+  pcs_vs_RCT[[split_pc_vals[x, "data"]]][split_pc_vals[x, "PC"]])
+split_pc_vals$pstar <- stars.pval(split_pc_vals$pval)
+
+split_pc_pvals <- unique(split_pc_vals[,c("sampletype_PC", "data_PC",
+                                          "pstar", "sample_type",
+                                          "plot_grouping", "measurement")])
+split_pc_pvals <- split_pc_pvals[order(split_pc_pvals$plot_grouping,
+                                       split_pc_pvals$measurement),]
+split_pc_pvals$ypos <- c(rep(18, 2),
+                         rep(48, 2),
+                         rep(98, 2),
+                         rep(20, 4))
+split_pc_pvals$ypos_segment <- split_pc_pvals$ypos*0.9
+# Additional adjustments to a few specific dot positions
+split_pc_pvals[split_pc_pvals$data_PC == "Wall\nmetaproteomics\nPC4", "ypos"] <-
+  split_pc_pvals[split_pc_pvals$data_PC == "Wall\nmetaproteomics\nPC4", "ypos"] + 5
+split_pc_pvals[split_pc_pvals$data_PC == "Liver\nproteomics\nPC15", "ypos"] <-
+  split_pc_pvals[split_pc_pvals$data_PC == "Liver\nproteomics\nPC15", "ypos"] - 2
+
+# Draw box plots for microbial (meta) omics
+pc_boxplots_meta <- lapply(
+  unique(subset(split_pc_vals, plot_grouping == "Metaomics")$measurement), function(x){
+    
+    df_res <- subset(split_pc_vals, plot_grouping == "Metaomics" & measurement == x)
+    df_p <- subset(split_pc_pvals, plot_grouping == "Metaomics" & measurement == x)
+    
+    ggplot(df_res, aes(x = sampletype_PC, y = PC_values, fill = RCT)) +
+      geom_boxplot(outlier.shape = NA) +
+      scale_fill_manual(values = RCT_cols) +
+      geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1.25,
+                   position = position_dodge(width = 0.75)) +
+      xlab(NULL) + ylab("PC score") +
+      facet_wrap(~measurement, scale = "free_y", ncol = 1) +
+      expand_limits(y = unique(df_p$ypos)+10) +
+      annotate(geom = "text",
+             x = df_p$sampletype_PC,
+             y = df_p$ypos,
+             label = df_p$pstar,
+             size = 4) +
+      annotate(geom = "segment",
+             x = c(0.75, 1.75), xend = seq(1.25, 2.25),
+             y = df_p$ypos_segment) +
+      theme_classic(base_size = 8) +
+      theme(legend.position = "none")
+    })
+# Add panel titles
+pc_boxplots_meta[[1]] <- pc_boxplots_meta[[1]] +
+  ggtitle("c") + theme(plot.title = element_text(face = "bold", size = 12))
+pc_boxplots_meta[[2]] <- pc_boxplots_meta[[2]] +
+    ggtitle("d") + theme(plot.title = element_text(face = "bold", size = 12))
+pc_boxplots_meta[[3]] <- pc_boxplots_meta[[3]] +
+    ggtitle("e") + theme(plot.title = element_text(face = "bold", size = 12))
+
+# Draw plots for host omics
+pc_boxplots_host <- ggplot(subset(split_pc_vals, plot_grouping == "Host omics"),
+                           aes(x = data_PC,
+                               y = PC_values, fill = RCT)) +
+      geom_boxplot(outlier.shape = NA, width = 0.4) +
+      scale_fill_manual(values = RCT_cols, name = "RCT") +
+      geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1.25,
+                   position = position_dodge(width = 0.4)) +
+      xlab(NULL) + ylab("PC score") +
+  facet_grid(~plot_grouping) +
+      annotate(geom = "text",
+             x = subset(split_pc_pvals, plot_grouping == "Host omics")$data_PC,
+             y = subset(split_pc_pvals, plot_grouping == "Host omics")$ypos,
+             label = subset(split_pc_pvals, plot_grouping == "Host omics")$pstar,
+             size = 4) +
+      annotate(geom = "segment",
+             x = seq(0.85, 3.85, 1),
+             xend = seq(1.15, 4.15, 1),
+             y = 17.5) +
+      theme_classic(base_size = 8) +
+  ggtitle("f") +
+      theme(legend.position = "bottom",
+            legend.box.background = element_rect(color = "black"),
+            plot.title = element_text(face = "bold", size = 12))
+```
+
+# Panel g
+
+Loadings for the top contributing taxa for the most RCT-influenced PCs.
+
+PC1 for digesta metatranscriptomics:
+
+```{r pc_loadings_data_mt}
+# Digesta metatranscriptomics
+
+# Get loadings
+dig_metat_pc_loadings <- data.frame(
+  Gene_ID = names(all_pcas_list[["Digesta_metatranscriptomics"]]$rotation[,"PC1"]),
+  loading = all_pcas_list[["Digesta_metatranscriptomics"]]$rotation[,"PC1"])
+
+# Add annotations from master table
+dig_metat_pc_loadings <- merge(dig_metat_pc_loadings,
+                               mt_df[, c("Gene_ID", "sample", "Kingdom", "Phylum", "Class",
+                                         "Order", "Family", "Genus", "Species",
+                                         "ko_id", "kegg_hit", "cazy_best_hit")],
+                               by = "Gene_ID")
+
+# Simple database information
+# (the top 1000 features from metaT include only protozoa, bacteria and archaea, no fungi or host)
+dig_metat_pc_loadings$db <- ifelse(dig_metat_pc_loadings$Kingdom == "Protozoa",
+                                   "Protozoa", "Bacteria and Archaea")
+
+# SAGs: use species for tax summary
+dig_metat_pc_loadings[dig_metat_pc_loadings$db == "Protozoa",
+                      "tax"] <- dig_metat_pc_loadings[dig_metat_pc_loadings$db == "Protozoa", "Species"]
+
+# MAGs: use genus for tax summary
+dig_metat_pc_loadings[dig_metat_pc_loadings$db == "Bacteria and Archaea",
+                      "tax"] <- dig_metat_pc_loadings[dig_metat_pc_loadings$db == "Bacteria and Archaea", "Genus"]
+```
+
+PC1 for digesta metaproteomics:
+
+```{r pc_loadings_data_mp}
+# Get loadings
+dig_metap_pc_loadings <- data.frame(
+  Gene_ID = names(all_pcas_list[["Digesta_metaproteomics"]]$rotation[,"PC1"]),
+  loading = all_pcas_list[["Digesta_metaproteomics"]]$rotation[,"PC1"])
+
+# Get annotations from master table
+mp_annotations <- fread("../data/proteomics/proteomics_rawintensity_annotation_taxonomy.tsv",
+                        sep = "\t", data.table = FALSE) 
+# Trim to annotation details only (exclude intensities per animal and animal variables)
+mp_annotations <- unique(mp_annotations[,c("protein", "genome", "database_short", "tax_kingdom",
+                                           "tax_phylum", "tax_class", "tax_order",
+                                           "tax_family", "tax_genus", "tax_species",
+                                           "seed_ortholog", "Description", "KEGG_ko", "CAZy")])
+mp_annotations$Gene_ID <- sub("db[A-Z]\\|", "", mp_annotations$protein)
+
+# Add annotations to PC loadings df
+dig_metap_pc_loadings <- merge(dig_metap_pc_loadings,
+                               mp_annotations,
+                               by = "Gene_ID")
+
+# Simple database information
+dig_metap_pc_loadings$db <- ifelse(dig_metap_pc_loadings$database_short %in% c("dbC", "dbD"),
+                                   "Protozoa",
+                                   ifelse(dig_metap_pc_loadings$database_short == "dbA",
+                                          "Bacteria and Archaea",
+                                          ifelse(dig_metap_pc_loadings$database_short == "dbB",
+                                                 "Host", "other")))
+
+# SAGs: use species for tax summary
+dig_metap_pc_loadings[dig_metap_pc_loadings$db == "Protozoa",
+                      "tax"] <- paste(dig_metap_pc_loadings[dig_metap_pc_loadings$db == "Protozoa", "tax_genus"],
+                                      dig_metap_pc_loadings[dig_metap_pc_loadings$db == "Protozoa", "tax_species"])
+
+# Other clades: use genus for tax summary
+dig_metap_pc_loadings[dig_metap_pc_loadings$db != "Protozoa",
+                      "tax"] <- dig_metap_pc_loadings[dig_metap_pc_loadings$db != "Protozoa", "tax_genus"]
+```
+
+```{r pc_loadings_data_combo}
+# Put together top 100 per "side" (positive or negative loadings) from each data type
+dig_pc_loadings_top <- rbind(
+  data.frame(
+      table(dig_metat_pc_loadings[
+      order(dig_metat_pc_loadings$loading)[1:100], c("tax", "db")],
+      useNA = "ifany"),
+    side = "negative",
+    source = "Digesta_metatranscriptomics"),
+  data.frame(
+    table(dig_metat_pc_loadings[
+      order(dig_metat_pc_loadings$loading, decreasing = TRUE)[1:100], c("tax", "db")],
+      useNA = "ifany"),
+    side = "positive",
+    source = "Digesta_metatranscriptomics"),
+  data.frame(
+    table(dig_metap_pc_loadings[
+      order(dig_metap_pc_loadings$loading)[1:100], c("tax", "db")],
+      useNA = "ifany"),
+    side = "negative",
+    source = "Digesta_metaproteomics"),
+  data.frame(
+    table(dig_metap_pc_loadings[
+      order(dig_metap_pc_loadings$loading, decreasing = TRUE)[1:100], c("tax", "db")],
+      useNA = "ifany"),
+    side = "positive",
+    source = "Digesta_metaproteomics"))
+
+# Fix/simplify discrepant naming
+dig_pc_loadings_top[dig_pc_loadings_top$tax == "Ruminococcus_E", "tax"] <- "Ruminococcus"
+```
+
+```{r pc_loadings_plot_setup}
+# Trimming for plot: Put taxa only seen once into an "other" category
+dig_pc_loadings_top <- subset(dig_pc_loadings_top, Freq > 0)
+pc_tax_sum <- aggregate(dig_pc_loadings_top, Freq ~ tax + db, sum)
+
+# Trim to taxa seen more than once in total
+dig_pc_loadings_top_trim <- subset(
+  dig_pc_loadings_top, tax %in% pc_tax_sum[pc_tax_sum$Freq > 1, "tax"])
+# Add "other" category for those seen only once
+dig_pc_loadings_top_other <- subset(
+  dig_pc_loadings_top, tax %in% pc_tax_sum[pc_tax_sum$Freq == 1, "tax"])
+dig_pc_loadings_top_other <- aggregate(dig_pc_loadings_top_other,
+                                       Freq ~ db + side + source, sum)
+dig_pc_loadings_top_other$tax <- "other"
+# Fix label for host
+dig_pc_loadings_top_other[dig_pc_loadings_top_other$db == "Host", "tax"] <- "Bos taurus"
+
+# Combine common and "other" dfs
+dig_pc_loadings_top_trim <- rbind(dig_pc_loadings_top_trim,
+                                  dig_pc_loadings_top_other)
+
+# Improved labeling
+dig_pc_loadings_top_trim$source <- paste("PC1",
+                                         sub("_", "\n",
+                                             dig_pc_loadings_top_trim$source))
+levels(dig_pc_loadings_top_trim$tax) <- sub("\\.", " ", levels(dig_pc_loadings_top_trim$tax))
+
+# For plotting purposes, make freqs for RCT-B negative
+dig_pc_loadings_top_trim$Freq_dir <- dig_pc_loadings_top_trim$Freq
+dig_pc_loadings_top_trim[dig_pc_loadings_top_trim$side == "negative",
+                         "Freq_dir"] <- -dig_pc_loadings_top_trim[
+                           dig_pc_loadings_top_trim$side == "negative",
+                         "Freq_dir"]
+
+# Custom categorical color variable
+dig_pc_loadings_top_trim$Freq_fill_cat <- cut(
+  dig_pc_loadings_top_trim$Freq_dir,
+  breaks = c(-100, -20, -5, -0.5, 0.5, 1, 5, 20, 100))
+freq_fill_cols <- setNames(c("#49ad8b", "#A4D6C5", "#f7fcfa", "white",
+                             "gray95", "gray80", "gray70", "gray55"),
+                         levels(dig_pc_loadings_top_trim$Freq_fill_cat))
+
+dig_pc_loadings_top_trim$side <- factor(dig_pc_loadings_top_trim$side,
+                                        levels = c("positive", "negative"))
+```
+
+```{r pc_loadings_plot}
+# Set up italics for taxon labels
+dig_pc_loadings_top_trim$tax_label <- sapply(
+  as.character(dig_pc_loadings_top_trim$tax), function(x)
+    ifelse(
+      (x %in% grep("[0-9]", levels(dig_pc_loadings_top_trim$tax), value = TRUE) | x == "other"),
+         x,
+         paste0("*", x, "*")))
+# Manual fix for one special case ("Isotricha sp YL-2021a")
+dig_pc_loadings_top_trim[dig_pc_loadings_top_trim$tax_label == "Isotricha sp YL-2021a",
+                         "tax_label"] <- "*Isotricha* sp. YL-2021a"
+# Fix level ordering to put "other" last
+dig_pc_loadings_top_trim$tax_label <- factor(dig_pc_loadings_top_trim$tax_label,
+                                             levels = c(
+                                               setdiff(
+                                                 sort(unique(dig_pc_loadings_top_trim$tax_label)), "other"),
+                                             "other"))
+
+# Plot taxon summary panel
+pc_loadings_tax <- ggplot(dig_pc_loadings_top_trim,
+         aes(x = tax_label, y = source, fill = Freq_fill_cat)) +
+    geom_tile(color = "gray70") +
+    geom_text(color = "gray25", size = 2.5, aes(label = Freq)) +
+    ylab(NULL) + xlab(NULL) +
+    theme_classic(base_size = 8) +
+    scale_fill_manual(values = freq_fill_cols) +
+    facet_grid(side~db, scale = "free_x", space = "free_x") +
+    ggtitle("g") +
+    theme(axis.text.x = element_markdown(angle = 45, hjust = 1, vjust = 1),
+          plot.title = element_text(face = "bold", size = 12),
+          legend.position = "none")
+```
+
+# Combined plot export
+
+```{r fig2, fig.width=7, fig.height=10}
+plot_grid(
+  plot_grid(
+      asv_pcoa + ggtitle("a"),
+      mag_pcoa + ggtitle("b"),
+      nrow = 1, align = "hv", axis = "tl"),
+  plot_grid(
+    plotlist = pc_boxplots_meta,
+    nrow = 1, align = "h"),
+  pc_boxplots_host,
+  pc_loadings_tax,
+  ncol = 1, rel_heights = c(1, 0.75, 0.9, 0.85))
+```
+
+# Export PCA results for Supplementary table
+
+```{r pca_export}
+# Make a list with concatenated sample scores and loadings from selected PCAs
+pca_list_concat <- lapply(c("Digesta_metatranscriptomics",
+                            "Digesta_metaproteomics"), function(x)
+  rbind(all_pcas_list[[x]]$x,
+        matrix(nrow = 1, ncol = ncol(all_pcas_list[[x]]$x)), # add an NA row to separate samples + loadings
+        all_pcas_list[[x]]$rotation))
+names(pca_list_concat) <- c("Digesta_metaT_PCA",
+                            "Digesta_metaP_PCA")
+
+# Full taxonomic details for PC1 from both of these
+pca_tax_details <- list(
+  Digesta_metaT_PC1 = dig_metat_pc_loadings,
+  Digesta_metaP_PC1 = dig_metap_pc_loadings)
+
+# Top taxonomy per PC summary table: Remove redundant zero Frequency rows
+dig_pc_loadings_top <- subset(dig_pc_loadings_top, Freq > 0)
+rownames(dig_pc_loadings_top) <- NULL
+
+# Put all together:
+pca_exports_list <- c(
+  pca_list_concat,
+  pca_tax_details,
+  Top_loadings_tax = list(dig_pc_loadings_top)
+)
+
+# Export list of data frames to excel
+write.xlsx(pca_exports_list, "../results/supp_tables/dig_pca_res.xlsx", rowNames = TRUE)
+```

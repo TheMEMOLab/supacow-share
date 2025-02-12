@@ -1,0 +1,450 @@
+---
+title: 'SuPA[cow]: Supplementary Table 1: Summary of omic layers'
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+mainfont: Arial
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# Required packages
+library("tidyverse")
+library("flextable")
+library("officer")
+library("Hmisc")
+library("phyloseq")
+library("data.table")
+library("openxlsx")
+
+# function for summarizing feature metrics
+summarize_features <- function(dfs, dig = 1){
+  do.call("rbind", lapply(names(dfs), function(x)
+  data.frame(subset = x,
+             n_samples = ncol(dfs[[x]]),
+             n_features = nrow(dfs[[x]]),
+             features_per_sample_mean = round(mean(colSums(dfs[[x]] > 0)), digits = dig),
+             features_per_sample_SD = round(sd(colSums(dfs[[x]] > 0)), digits = dig),
+             sample_mean = round(mean(colSums(dfs[[x]])), digits = dig),
+             sample_SD = round(sd(colSums(dfs[[x]])), digits = dig))))
+}
+```
+
+# Supplementary Table 1: Summaries of features per data type
+
+## ASVs
+
+```{r amplicon_data_summary}
+# import ASV 16S data
+dada2_16s <- read.csv("../data/16S/tax_counts_GTDBref.csv",
+                      row.names = 1)
+dada2_counts <- dada2_16s[,grep("MQ", colnames(dada2_16s))]
+
+# fix sample names (to sort out timepoints)
+dnas_meta <- read.csv("../data/16S/dnasense_meta.csv")
+dnas_meta$ampliconSample <- make.names(dnas_meta$seqID)
+rownames(dnas_meta) <- dnas_meta[,"ampliconSample"]
+colnames(dada2_counts) <- dnas_meta[colnames(dada2_counts), "sampleName"]
+
+# trim rare ASVs (prior to time point trim == the order used in 16S workflow)
+dada2_counts_trim <- dada2_counts[
+  rowSums(dada2_counts > 0) > round(ncol(dada2_counts)/10),]
+
+# trim to T6
+dada2_counts_T6 <- dada2_counts_trim[,grep("T6", colnames(dada2_counts_trim))]
+
+# drop any zero taxa
+dada2_counts_T6 <- dada2_counts_T6[rowSums(dada2_counts_T6) > 0, ]
+
+dfs_16s <- list(all_timepoints_untrimmed = dada2_counts,
+                all_timepoints_rare_excluded = dada2_counts_trim,
+                T6_all = dada2_counts_T6,
+                T6_Archaea = dada2_counts_T6[rownames(dada2_counts_T6) %in%
+                                                     rownames(subset(dada2_16s, Kingdom == "Archaea")),],
+                T6_Bacteria = dada2_counts_T6[rownames(dada2_counts_T6) %in%
+                                                     rownames(subset(dada2_16s, Kingdom == "Bacteria")),],
+                T6_unclassified = dada2_counts_T6[rownames(dada2_counts_T6) %in%
+                                                     rownames(subset(dada2_16s, is.na(Kingdom))),])
+
+# summary values
+amplicon_summary <- summarize_features(dfs_16s)
+amplicon_summary <- data.frame(
+  material = "digesta",
+  omic = "16S",
+  features = "ASVs",
+  unit = "count",
+  amplicon_summary)
+```
+
+## MAGs
+
+NB: MAG statistics (for quality metrics etc) are in a separate table.
+
+```{r mag_data_summary}
+# data setup
+mag_coverm <- read.table("../data/metagenomics/Abundance.coverM.tsv", sep = "\t",
+                         header = TRUE, row.names = 1)
+# trim to t6
+mag_coverm_t6 <- mag_coverm[, grep("T6", colnames(mag_coverm))]
+
+# set up relative abundance data
+mag_ra_t6 <- mag_coverm_t6[,grep("Relative.Abundance", colnames(mag_coverm_t6))]
+colnames(mag_ra_t6) <- sub(".R1.*", "", colnames(mag_ra_t6))
+
+# set up taxonomy
+mag_tax <- read.table("../data/SupaCowTaxTotal.tsv", sep = "\t",
+                      header = TRUE, row.names = 1)
+mag_tax <- mag_tax[rownames(mag_ra_t6),]
+rownames(mag_tax) <- rownames(mag_ra_t6)
+
+# summarize by taxonomy
+dfs_mags <- list(T6_Archaea = mag_ra_t6[rownames(mag_ra_t6) %in%
+                                                rownames(subset(mag_tax, Kingdom == "Archaea")),],
+                 T6_Bacteria = mag_ra_t6[rownames(mag_ra_t6) %in%
+                                                 rownames(subset(mag_tax, Kingdom == "Bacteria")),],
+                 T6_unmapped = mag_ra_t6["unmapped",])
+
+mag_summary <- summarize_features(dfs_mags)
+mag_summary <- data.frame(
+  material = "digesta",
+  omic = "Metagenomics",
+  features = "MAGs",
+  unit = "relative abundance",
+  mag_summary)
+```
+
+## Transcriptomics
+
+### Digesta
+
+All, mapping statistics:
+
+```{r mt_dig_mapped}
+mt_dig_mapping <- read.table("../data/transcriptomics/Final.Kallisto.Stats.total.tsv",
+                             sep = "\t", header = TRUE)
+
+mt_dig_map_summary <- data.frame(
+  material = "digesta",
+  omic = "metatranscriptomics",
+  features = NA,
+  unit = c("total reads",
+           "mapped reads",
+           "percent mapped reads"),
+  subset = "all_timepoints",
+  n_samples = nrow(mt_dig_mapping),
+  n_features = "",
+  features_per_sample_mean = "",
+  features_per_sample_SD = "",
+  sample_mean = c(mean(mt_dig_mapping$TotalReads),
+                  mean(mt_dig_mapping$Bac_Pseudoaligned),
+                  mean(mt_dig_mapping$Bac_Perc_Alin)),
+  sample_SD = c(sd(mt_dig_mapping$TotalReads),
+                sd(mt_dig_mapping$Bac_Pseudoaligned),
+                sd(mt_dig_mapping$Bac_Perc_Alin)))
+```
+
+All, without taxonomy information:
+
+```{r mt_dig_all}
+mt_dig_df <- data.frame(
+  fread("../data/transcriptomics/MetaT.SupaCow.RawCounts.tsv"),
+  row.names = 1)
+# trim out features where everything is zero
+mt_dig_df <- mt_dig_df[rowSums(mt_dig_df) > 0,]
+
+# trim to T6
+mt_dig_df_T6 <- mt_dig_df[,grep("T6", colnames(mt_dig_df))]
+# trim features where everything is zero
+mt_dig_df_T6 <- mt_dig_df_T6[rowSums(mt_dig_df_T6) > 0,]
+
+mt_dig_dfs1 <- list(all_timepoints = mt_dig_df,
+                    T6_all = mt_dig_df_T6)
+
+mt_dig_summary1 <- summarize_features(mt_dig_dfs1)
+mt_dig_summary1 <- data.frame(
+  material = "digesta",
+  omic = "metatranscriptomics",
+  features = "transcripts",
+  unit = "count",
+  mt_dig_summary1)
+```
+
+Separated by taxonomy:
+
+```{r mt_dig_annotated, cache.lazy=FALSE}
+# Load file with annotations
+metat_ann <- fread("../data/transcriptomics/MetaT.RawCounts.Annotated.zerotrim.csv",
+                    data.table = FALSE)
+# trim to T6
+metat_ann_counts_T6 <- metat_ann[,c("Kingdom", grep("T6", colnames(metat_ann), value = TRUE))]
+rownames(metat_ann_counts_T6) <- metat_ann$Gene_ID
+
+# counts per taxon group
+mt_dig_dfs2 <- list(T6_Archaea = subset(metat_ann_counts_T6, Kingdom == "Archaea")[,grep("T6", colnames(metat_ann_counts_T6))],
+                    T6_Bacteria = subset(metat_ann_counts_T6, Kingdom == "Bacteria")[,grep("T6", colnames(metat_ann_counts_T6))],
+                    'T6_Eukarya-Ciliophora' = subset(metat_ann_counts_T6, Kingdom == "Protozoa")[,grep("T6", colnames(metat_ann_counts_T6))],
+                    'T6_Eukarya-Fungi' = subset(metat_ann_counts_T6, Kingdom == "Fungi")[,grep("T6", colnames(metat_ann_counts_T6))],
+                    T6_unannotated = mt_dig_df_T6[setdiff(rownames(mt_dig_df_T6), rownames(metat_ann_counts_T6)),])
+
+mt_dig_summary2 <- summarize_features(mt_dig_dfs2)
+mt_dig_summary2 <- data.frame(
+  material = "digesta",
+  omic = "metatranscriptomics",
+  features = "transcripts",
+  unit = "count",
+  mt_dig_summary2)
+```
+
+### Wall
+
+```{r mt_wall}
+# Metadata for wall & liver
+mt_meta <- read.csv("../data/transcriptomics/2023-7-12_CP958d_meta.csv")
+rownames(mt_meta) <- make.names(mt_meta$seqID)
+
+# Host data
+mt_w_host <- data.frame(
+  fread("../data/transcriptomics/FeatureCount_CP958d_host.txt"),
+  row.names = 1)
+mt_w_host <- mt_w_host[,rownames(subset(mt_meta, sampleMaterial == "wall"))]
+# Trim any zero rows
+mt_w_host <- mt_w_host[rowSums(mt_w_host) > 0,]
+
+# Microbiome data
+mt_w_micro <- data.frame(
+  fread("../data/transcriptomics/FeatureCount_CP958d_microbiome_noHeader.txt"),
+  row.names = 1)
+mt_w_micro <- mt_w_micro[,rownames(subset(mt_meta, sampleMaterial == "wall"))]
+# Trim any zero rows
+mt_w_micro <- mt_w_micro[rowSums(mt_w_micro) > 0,]
+
+# Summaries
+mt_w_dfs <- list(T6_metaT = mt_w_micro,
+                 T6_host = mt_w_host)
+
+mt_w_summary <- summarize_features(mt_w_dfs)
+mt_w_summary <- data.frame(
+  material = "wall",
+  omic = "(meta)transcriptomics",
+  features = "transcripts",
+  unit = "count",
+  mt_w_summary)
+```
+
+### Liver
+
+```{r mt_liver}
+# Host data
+mt_liver <- data.frame(
+  fread("../data/transcriptomics/FeatureCount_CP958d_host.txt"),
+  row.names = 1)
+mt_liver <- mt_liver[,rownames(subset(mt_meta, sampleMaterial == "liver"))]
+# Trim any zero rows
+mt_liver <- mt_liver[rowSums(mt_liver) > 0,]
+
+mt_l_summary <- summarize_features(list(T6_host = mt_liver))
+mt_l_summary <- data.frame(
+  material = "liver",
+  omic = "transcriptomics",
+  features = "transcripts",
+  unit = "count",
+  mt_l_summary)
+```
+
+## Proteomics
+
+```{r p_setup}
+# Import data
+mp_raw_file <- "../data/proteomics/proteomics_rawintensity_annotation_taxonomy.tsv"
+mp_raw_df <- fread(mp_raw_file, sep = "\t", data.table = FALSE)
+
+# Classic sample name column
+mp_raw_df$animal_sample <- paste0(mp_raw_df$source,
+                                  ifelse(nchar(mp_raw_df$animal) == 1,
+                                         paste0("0", mp_raw_df$animal),
+                                         mp_raw_df$animal),
+                                  mp_raw_df$timepoint)
+```
+
+### Digesta
+
+```{r mp_dig}
+# Subset to digesta
+mp_raw_dig <- subset(mp_raw_df, source == "D")
+
+# Reorganize per animal
+mp_raw_dig_c <- reshape2::dcast(mp_raw_dig, protein ~ animal_sample, value.var = "intensity", fill =  0)
+rownames(mp_raw_dig_c) <- mp_raw_dig_c$protein
+mp_raw_dig_c$protein <- NULL
+
+# Subset to T6
+mp_raw_dig_t6 <- mp_raw_dig_c[,grep("T6", colnames(mp_raw_dig_c))]
+# Trim empty rows
+mp_raw_dig_t6 <- mp_raw_dig_t6[rowSums(mp_raw_dig_t6) > 0,]
+
+# Summarize by kingdom
+mp_dig_per_tax <- lapply(sort(unique(mp_raw_dig$tax_kingdom)), function(x){
+  df_c <- reshape2::dcast(subset(mp_raw_dig, tax_kingdom == x),
+                          protein ~ animal_sample, value.var = "intensity",
+                          fill =  0)
+  rownames(df_c) <- df_c$protein
+  df_c$protein <- NULL
+  df_c <- df_c[,grep("T6", colnames(df_c))]
+  df_c[rowSums(df_c) > 0,]
+  })
+names(mp_dig_per_tax) <- paste("T6", sort(unique(mp_raw_dig$tax_kingdom)), sep = "_")
+
+# Summaries
+mp_dig_dfs <- c(list(all_timepoints = mp_raw_dig_c,
+                     T6_all = mp_raw_dig_t6),
+                mp_dig_per_tax)
+
+mp_dig_summary <- summarize_features(mp_dig_dfs)
+mp_dig_summary <- data.frame(
+  material = "digesta",
+  omic = "metaproteomics",
+  features = "protein groups",
+  unit = "LFQ intensity",
+  mp_dig_summary)
+```
+
+### Wall
+
+```{r mp_wall}
+# Subset to wall data
+mp_raw_w <- subset(mp_raw_df, source == "W")
+
+# Reorganize per animal
+mp_raw_wall_c <- reshape2::dcast(mp_raw_w, protein ~ animal_sample, value.var = "intensity", fill =  0)
+rownames(mp_raw_wall_c) <- mp_raw_wall_c$protein
+mp_raw_wall_c$protein <- NULL
+
+# Summarize by kingdom
+mp_w_per_tax <- lapply(sort(unique(mp_raw_w$tax_kingdom)), function(x){
+  df_c <- reshape2::dcast(subset(mp_raw_w, tax_kingdom == x),
+                          protein ~ animal_sample, value.var = "intensity",
+                          fill =  0)
+  rownames(df_c) <- df_c$protein
+  df_c$protein <- NULL
+  df_c <- df_c[,grep("T6", colnames(df_c))]
+  df_c[rowSums(df_c) > 0,]
+  })
+names(mp_w_per_tax) <- paste("T6", sort(unique(mp_raw_w$tax_kingdom)), sep = "_")
+
+# Summaries
+mp_w_dfs <- c(list(T6_all = mp_raw_wall_c),
+              mp_w_per_tax)
+names(mp_w_dfs)[grep("Animalia", names(mp_w_dfs))] <- "T6_host"
+
+mp_w_summary <- summarize_features(mp_w_dfs)
+mp_w_summary <- data.frame(
+  material = "wall",
+  omic = "(meta)proteomics",
+  features = "protein groups",
+  unit = "LFQ intensity",
+  mp_w_summary)
+```
+
+### Liver
+
+```{r mp_liver}
+# Trim to liver data
+mp_raw_l <- subset(mp_raw_df, source == "L")
+
+# Reorganize per animal
+mp_raw_l_c <- reshape2::dcast(mp_raw_l, protein ~ animal_sample, value.var = "intensity", fill =  0)
+rownames(mp_raw_l_c) <- mp_raw_l_c$protein
+mp_raw_l_c$protein <- NULL
+
+# Summarize
+mp_l_summary <- summarize_features(list(T6_host = mp_raw_l_c))
+mp_l_summary <- data.frame(
+  material = "liver",
+  omic = "proteomics",
+  features = "protein groups",
+  unit = "LFQ intensity",
+  mp_l_summary)
+```
+
+## Metabolomics
+
+```{r mb_dig}
+# Digesta
+dig_mb_df_T6 <- as.data.frame(
+  readRDS("../data/metabolomics/10_MSOmics_abundances_rect_post.rds"))
+rownames(dig_mb_df_T6) <- dig_mb_df_T6$compound_number
+dig_mb_df_T6 <- dig_mb_df_T6[,grep("^D", colnames(dig_mb_df_T6))]
+
+# Wall
+wall_mb_df <- read.csv("../data/metabolomics/2023-04-03_mb_wall_t6_pqn_areas.csv",
+                         row.names = 1)
+wall_mb_df <- wall_mb_df[grep("SA", rownames(wall_mb_df)),]
+wall_mb_df <- t(wall_mb_df)
+
+# Liver
+mb_liver_df <- read.csv("../data/metabolomics/2023-04-03_mb_liver_t6_pqn_areas.csv",
+                         row.names = 1)
+mb_liver_df <- t(mb_liver_df)
+
+# Summaries (separate for each sample type)
+
+mb_dig_summary <- data.frame(
+  material = "digesta",
+  omic = "(meta)metabolomics",
+  features = "metabolites",
+  unit = "peak area",
+  summarize_features(list(T6_all = dig_mb_df_T6)))
+
+mb_w_summary <- data.frame(
+  material = "wall",
+  omic = "(meta)metabolomics",
+  features = "metabolites",
+  unit = "PQ-normalized peak area",
+  summarize_features(list(T6_all = wall_mb_df), 4))
+
+mb_l_summary <- data.frame(
+  material = "liver",
+  omic = "metabolomics",
+  features = "metabolites",
+  unit = "PQ-normalized peak area",
+  summarize_features(list(T6_all = mb_liver_df), 4))
+
+mb_summary <- rbind(
+  mb_dig_summary,
+  mb_w_summary,
+  mb_l_summary
+)
+```
+
+# Everything combined
+
+```{r stable1}
+all_summaries <- rbind(
+  amplicon_summary,
+  mag_summary,
+  mt_dig_map_summary,
+  mt_dig_summary1,
+  mt_dig_summary2,
+  mt_w_summary,
+  mt_l_summary,
+  mp_dig_summary,
+  mp_w_summary,
+  mp_l_summary,
+  mb_summary
+)
+# Harmonize a few labels
+all_summaries$subset <- sub("T6_Fungi", "T6_Eukarya-Fungi",
+                            sub("T6_SAR\\/Alveolata", "T6_Eukarya-Ciliophora",
+                                sub("T6_Animalia", "T6_host",
+                                    all_summaries$subset)))
+
+# Export
+write.xlsx(all_summaries, "../results/supp_tables/feature_summary.csv", row.names = FALSE)
+```

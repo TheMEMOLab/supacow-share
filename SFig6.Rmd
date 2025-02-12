@@ -1,0 +1,358 @@
+---
+title: "| Extended Data Fig 6 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("data.table")
+library("cowplot")
+library("reshape2")
+library("openxlsx")
+library("ggh4x")
+```
+
+This script uses the PCA results from `Fig2.Rmd` for selecting taxa of interest, so that must have been run before executing this file (those results are also available as a supplementary table in the manuscript).
+
+# More detailed pathway data for genera / MAGs of interest
+
+```{r selection_lists}
+# KOs of interest - from separate curated list
+kos_of_interest <- read.csv("../data/kos_of_interest.csv")
+
+# Genera of interest based on PCA loadings
+pca_res <- read.xlsx("../results/supp_tables/dig_pca_res.xlsx",
+                     sheet = "Top_loadings_tax", rowNames = TRUE)
+pc_tax_sum <- aggregate(pca_res, Freq ~ tax, sum)
+gen_of_interest <- unique(sub("\\..*", "",  pc_tax_sum[pc_tax_sum$Freq > 1, "tax"]))
+
+# MAGs of interest based on the above
+mag_tax <- read.table("../data/SupaCowTaxTotal.tsv", sep = "\t",
+                      header = TRUE, row.names = 1)
+mag_tax <- subset(mag_tax, Kingdom %in% c("Archaea", "Bacteria"))
+mag_tax$MAG <- rownames(mag_tax)
+mags_of_interest <- subset(mag_tax, Genus %in% gen_of_interest)
+```
+
+## MetaG
+
+```{r metag_pres_abs}
+# Import DRAM data
+dram_file <- "../data/metagenomics/metabolism_summary.xlsx"
+dram_file_sheets <- getSheetNames(dram_file)
+mags_dram_full <- lapply(dram_file_sheets, function(x)
+  read.xlsx(dram_file, sheet = x))
+names(mags_dram_full) <- dram_file_sheets
+
+# Summaries from DRAM distillate
+mags_dram_summaries <- lapply(mags_dram_full, function(x){
+  df <- subset(x, gene_id %in% kos_of_interest$ko)
+  if(nrow(df) > 1){
+  df_num <- sapply(df[,6:ncol(df)], as.numeric)
+  df_num <- df_num[,mags_of_interest$MAG]
+  df_trim <- cbind(
+    df[,1:5],
+    df_num[,names(which(colSums(df_num) > 0))]
+  )
+  melt(df_trim)
+}
+})
+mags_dram_summaries <- mags_dram_summaries[!sapply(mags_dram_summaries, is.null)]
+mags_dram_summaries <- do.call("rbind", mags_dram_summaries)
+mags_dram_summaries$dram_sheet <- sub("\\..*", "", rownames(mags_dram_summaries))
+
+# Add KO and MAG details
+colnames(mags_dram_summaries)[grep("gene_id", colnames(mags_dram_summaries))] <- "ko"
+mags_dram_summaries <- merge(mags_dram_summaries, kos_of_interest, by = "ko")
+colnames(mags_dram_summaries)[grep("variable", colnames(mags_dram_summaries))] <- "MAG"
+mags_dram_summaries <- merge(mags_dram_summaries, mags_of_interest, by = "MAG")
+
+# Simplified for presence-absence
+mags_dram_summaries_pres <- subset(mags_dram_summaries, value > 0)
+mags_dram_summaries_pres$pres_abs <- 1
+
+# Remove duplicate rows (same KO may be in multiple modules in the DRAM output)
+mg_summary_pres_abs <- unique(mags_dram_summaries_pres[,c("ko", "MAG", "Genus",
+                                                          "abbreviation", "pathway",
+                                                          "pres_abs")])
+
+# Manual edit: we know due to manual inspection of the sequences that
+# there are genes from genera Merdiplasma and RUG762 that are likely to actually be
+# Hnd hydrogenases, but were not annotated as such by DRAM.
+# Label them as such based on the separate manual curation.
+hnd_add <- read.csv("../data/metagenomics/hnd_annotations_fix.csv")
+mg_summary_pres_abs <- rbind(mg_summary_pres_abs,
+                             unique(
+                               data.frame(
+                                 hnd_add[,intersect(colnames(hnd_add),
+                                                  colnames(mg_summary_pres_abs))],
+                               pathway = "WLP additional",
+                               pres_abs = 1)))
+```
+
+## MetaT
+
+```{r metat_pres_abs}
+# Import full data
+metat_annot <- fread("../data/transcriptomics/MetaT.RawCounts.Annotated.zerotrim.csv",
+                    data.table = FALSE)
+
+# Manual edit: relabel the Hnd as explained above
+metat_annot[match(hnd_add$Gene_ID,
+                  metat_annot$Gene_ID),
+            "ko_id"] <- hnd_add$ko
+
+# Subset to MAGs and KOs of interest
+metat_annot_i <- subset(metat_annot,
+                        ko_id %in% kos_of_interest$ko &
+                          sample %in% mags_of_interest$MAG)
+
+# Add KO details
+colnames(metat_annot_i)[grep("ko", colnames(metat_annot_i))] <- "ko"
+metat_annot_i <- merge(as.data.frame(metat_annot_i),
+                       kos_of_interest,
+                       by = "ko")
+
+# Summarize by MAG + KO
+metat_annot_i_m <- melt(metat_annot_i[,c("ko", "Gene_ID", "sample", "Genus",
+                                         "pathway", "gene", "abbreviation",
+                                         grep("T6", colnames(metat_annot_i), value = TRUE))])
+metat_annot_i_reorg <- aggregate(value ~ sample + Genus + ko + abbreviation + pathway,
+                                 metat_annot_i_m, sum)
+
+# Simplified presence-absence
+metat_annot_i_pres <- subset(metat_annot_i_reorg, value > 0)
+metat_annot_i_pres$pres_abs <- 1
+```
+
+## MetaP
+
+```{r metap_pres_abs}
+# Import data
+mp_raw_file <- "../data/proteomics/proteomics_rawintensity_annotation_taxonomy.tsv"
+mp_raw_df <- fread(mp_raw_file, sep = "\t", data.table = FALSE)
+
+# Trim to T6 digesta, exclude any cow proteins
+mp_raw_dig_t6 <- subset(mp_raw_df, source == "D" & timepoint == "T6" &
+                          database_short != "dbB")
+# Simplified KO labels
+mp_raw_dig_t6$ko <- gsub("ko\\:", "", mp_raw_dig_t6$KEGG_ko)
+
+# There are cases where the same protein group has multiple KOs listed;
+# break these down to individual rows
+mp_raw_dig_t6_indiv <- mp_raw_dig_t6[grep("\\,", mp_raw_dig_t6$ko, invert = TRUE),]
+mp_raw_dig_t6_multi <- mp_raw_dig_t6[grep("\\,", mp_raw_dig_t6$ko),]
+mp_raw_dig_t6_multi_fix <- do.call("rbind", lapply(1:nrow(mp_raw_dig_t6_multi), function(x){
+  kos <- strsplit(mp_raw_dig_t6_multi[x, "ko"], split = ",")
+  data.frame(
+    mp_raw_dig_t6_multi[x, 1:(ncol(mp_raw_dig_t6_multi)-1)],
+    ko = unlist(kos))
+  }))
+
+mp_raw_dig_t6_fix <- rbind(
+  mp_raw_dig_t6_indiv,
+  mp_raw_dig_t6_multi_fix)
+
+# Trim to MAGs and KOs of interest
+mp_raw_dig_t6_i <- subset(mp_raw_dig_t6_fix,
+                          ko %in% kos_of_interest$ko &
+                            genome %in% mags_of_interest$MAG)
+# Add KO details
+mp_raw_dig_t6_i <- merge(mp_raw_dig_t6_i, kos_of_interest,
+                         by = "ko")
+
+# Simple presence variable (all rows have an intensity > 0 so are counted as present)
+mp_raw_dig_t6_i$pres <- 1
+
+# Reorganize per KO and MAG
+mp_i_reorg <- aggregate(pres ~ genome + tax_genus + ko + abbreviation + pathway,
+                        mp_raw_dig_t6_i, sum)
+# Even simpler presence dummy variable
+# (doesn't matter how many times a KO was counted per MAG)
+mp_i_reorg$pres_abs <- 1
+```
+
+# Combined
+
+```{r pres_abs_all, fig.width=7, fig.height=10}
+# Put together the different data types
+full_ko_res <- rbind(
+  data.frame(
+    mg_summary_pres_abs[,c("ko", "Genus", "MAG", "abbreviation", "pathway",
+                     "pres_abs")],
+    data = "metaG"),
+  data.frame(
+    metat_annot_i_pres[,c("ko", "Genus")],
+    MAG = metat_annot_i_pres$sample,
+    metat_annot_i_pres[,c("abbreviation", "pathway", "pres_abs")],
+    data = "metaT"),
+  data.frame(
+    ko = mp_i_reorg$ko,
+    Genus = mp_i_reorg$tax_genus,
+    MAG = mp_i_reorg$genome,
+    mp_i_reorg[,c("abbreviation", "pathway", "pres_abs")],
+    data = "metaP")
+  )
+
+# Fix a Genus discrepancy:
+# metaP data has "Methanobrevibacter_A" and "Ruminococcus_E"
+# which the other data types don't
+full_ko_res[full_ko_res$Genus == "Ruminococcus_E", "Genus"] <- "Ruminococcus"
+full_ko_res[full_ko_res$Genus == "Methanobrevibacter_A", "Genus"] <- "Methanobrevibacter"
+
+# Level ordering
+full_ko_res$data <- factor(full_ko_res$data,
+                           levels = c("metaP", "metaT", "metaG"))
+full_ko_res$ko <- factor(full_ko_res$ko,
+                         unique(kos_of_interest$ko))
+```
+
+```{r mag_RCT_cat}
+# Categorizing MAGs associated with the RCTs - considering any omics that aren't conflicting
+mg_da_res <- read.xlsx("../results/supp_tables/diff_abunds_tax.xlsx", sheet = "metaG_bac_arc")
+mt_da_res <- read.xlsx("../results/supp_tables/diff_abunds_tax.xlsx", sheet = "metaT_bac_arc")
+mp_da_res <- read.xlsx("../results/supp_tables/diff_abunds_tax.xlsx", sheet = "metaP")
+
+mag_da_rct <- do.call("rbind", lapply(mags_of_interest$MAG, function(x){
+  res <- data.frame(
+    MAG = x,
+    metaG = ifelse(mg_da_res[mg_da_res$MAG == x, "padj"] < 0.05,
+                       mg_da_res[mg_da_res$MAG == x, "up_in"],
+                   "n.s."),
+    metaT = ifelse(mt_da_res[mt_da_res$sample == x, "padj"] < 0.05,
+                       mt_da_res[mt_da_res$sample == x, "up_in"],
+                   "n.s."),
+    metaP = ifelse(x %in% mp_da_res$genome,
+                   ifelse(mp_da_res[mp_da_res$genome == x, "padj"] < 0.05,
+                              mp_da_res[mp_da_res$genome == x, "up_in"],
+                          "n.s."),
+                   NA))
+  cons <- table(t(res[,2:4]))
+  res$consensus <- ifelse(length(cons) == 1,
+                          names(cons),
+                          ifelse(length(cons) == 2 &
+                                   "n.s." %in% names(cons),
+                                 setdiff(names(cons), "n.s."),
+                                 "n.s."))
+  return(res)
+  }))
+
+# Add genus info
+mag_da_rct <- merge(mag_da_rct, mag_tax, by = "MAG")
+```
+
+```{r summary_plot, fig.width=7, fig.height=11}
+# Reorganize for plotting
+full_ko_res$label <- factor(paste(full_ko_res$ko,
+                                  full_ko_res$abbreviation),
+                            levels = paste(kos_of_interest$ko,
+                                           kos_of_interest$abbreviation))
+
+# Add information on MAG RCT association
+full_ko_res$MAG_RCT <- mag_da_rct[match(full_ko_res$MAG,
+                                        mag_da_rct$MAG),
+                                  "consensus"]
+
+# Summaries of n of MAGs with KO present per genus,
+full_ko_res_per_genus <- aggregate(pres_abs ~ MAG_RCT + Genus + label + pathway + data,
+                                  full_ko_res, sum)
+
+# Empty count for full pathway row
+full_ko_res_per_genus[full_ko_res_per_genus$Genus == "Full pathway",
+                      "pres_abs"] <- " "
+
+# Genus labels to indicate total n of MAGs
+mag_da_rct_summary <- as.data.frame(table(mag_da_rct[,c("Genus", "consensus")]))
+colnames(mag_da_rct_summary) <- c("Genus", "MAG_RCT", "MAG_RCT_count")
+full_ko_res_per_genus <- merge(full_ko_res_per_genus,
+                               mag_da_rct_summary,
+                               by = c("Genus", "MAG_RCT"))
+
+# Drop the n.s. ones as not interesting
+full_ko_res_per_genus_trim <- subset(full_ko_res_per_genus, MAG_RCT != "n.s.")
+
+# Genus + total MAGs label
+full_ko_res_per_genus_trim$Genus_label <- paste0(full_ko_res_per_genus_trim$Genus,
+                                                 "\n(total = ",
+                                                 full_ko_res_per_genus_trim$MAG_RCT_count,
+                                                 " MAGs)")
+
+# Add empty cells to just plot the full contents of the pathways
+# whether they were detected or not)
+full_ko_res_per_genus_trim <- rbind(
+  full_ko_res_per_genus_trim,
+  data.frame(
+    Genus = "Full pathway",
+    Genus_label = "Full pathway",
+    MAG_RCT = " ",
+    label = paste(kos_of_interest$ko,
+                  kos_of_interest$abbreviation),
+    pathway = kos_of_interest$pathway,
+    data = "reference",
+    pres_abs = " ",
+    MAG_RCT_count = NA))
+
+
+full_ko_res_per_genus_trim$Genus_label <- factor(
+  full_ko_res_per_genus_trim$Genus_label,
+  levels = c(setdiff(unique(full_ko_res_per_genus_trim$Genus_label),
+                            "Full pathway"),
+             "Full pathway"))
+
+full_ko_res_per_genus_trim$MAG_RCT <- factor(full_ko_res_per_genus_trim$MAG_RCT,
+                                             levels = c("Enriched in\nRCT-A",
+                                                        "Enriched in\nRCT-B",
+                                                        " "))
+
+# Fix long pathway labels
+full_ko_res_per_genus_trim$pathway <- gsub(" ", "\n",
+                                     full_ko_res_per_genus_trim$pathway)
+
+# added symbol to highlight the manually curated functions
+full_ko_res_per_genus_trim[
+  full_ko_res_per_genus_trim$Genus %in% c("Merdiplasma", "RUG762") &
+    sub(" .*", "", full_ko_res_per_genus_trim$label) %in% hnd_add$ko &
+    full_ko_res_per_genus_trim$data %in% c("metaG", "metaT"),
+  "pres_abs"] <- "1*"
+
+plot_grid(plotlist = lapply(
+  list(c("acetate", "butyrate", "propionate\nvia\nacrylate",
+         "propionate\nvia\nsuccinate", "ethanol"),
+       c("WLP", "WLP\nadditional")), function(x)
+           ggplot(subset(full_ko_res_per_genus_trim,
+                         pathway %in% x),
+                  aes(y = data, x = label, fill = data,
+                      label = pres_abs)) +
+    geom_tile(color = "gray20") +
+    geom_text(size = 1.75) +
+    theme_bw(base_size = 7) +
+    xlab(NULL) + ylab(NULL) +
+    scale_fill_manual(values = c(metaP = "thistle2",
+                                 metaT = "lightsteelblue1",
+                                 metaG = "gray80",
+                                 reference = "gray35")) +
+    facet_nested(MAG_RCT + Genus_label ~ pathway, switch = "y",
+               scales = "free", space = "free",
+               strip = strip_nested(size = "variable")) +
+    scale_y_discrete(position = "right") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+          strip.text.y.left = element_text(angle = 0),
+          strip.background = element_rect(fill = "white"),
+          legend.position = "none",
+          panel.grid = element_blank())),
+  ncol = 1, align = "h")
+```

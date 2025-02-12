@@ -1,0 +1,575 @@
+---
+title: "| Extended Data Fig 7 + 8 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("Hmisc")
+library("gridExtra")
+library("cowplot")
+library("reshape2")
+library("gtools")
+library("ComplexHeatmap")
+library("RColorBrewer")
+
+# Custom generic functions
+source("fig_functions.R")
+```
+
+This script builds on WGCNA results of metaproteomic data from the [holodoublevu](https://github.com/cmkobel/holodoublevu/) workflow.
+
+```{r hm_functions}
+# Custom functions for plotting
+
+# Reorganizing correlations for plotting
+mod_cor_reorg <- function(df, var1, var2){
+  ls <- lapply(c("coefficient", "pvalue"), function(x){
+    df <- dcast(df, as.formula(paste(var1, "~", var2)), value.var = x)
+    rownames(df) <- df[,1] 
+    df <- df[,-1]
+    as.matrix(df)
+  })
+  names(ls) <- c("coefficient", "pvalue")
+  ls[["pstar"]] <- stars.pval(ls[["pvalue"]])
+  return(ls)
+}
+
+# Custom heatmap function  
+custom_hm <- function(mat, cols, var, dist, rti = NULL,
+                      lab_size = 6, stars = NULL, col_split_vec = NULL){
+  if(!is.null(stars)){
+    Heatmap(mat,
+            col = cols,
+            cell_fun = function(j, i, x, y, width, height, fill){
+              grid.text(stars[i, j], x, y,
+                        gp = gpar(fontsize = lab_size,
+                                  col = "gray30"))},
+            clustering_distance_rows = dist,
+            clustering_method_rows = "ward.D",
+            name = var,
+            row_dend_side = "right",
+            row_names_side = "left",
+            rect_gp = gpar(col = "gray30", lwd = 0.5),
+            column_names_gp = grid::gpar(fontsize = lab_size),
+            row_names_gp = grid::gpar(fontsize = lab_size),
+            column_split = col_split_vec,
+            cluster_columns = FALSE,
+            column_gap = unit(2, "mm"),
+            row_title = rti,
+            row_title_gp = gpar(fontsize = 10),
+            column_title_gp = gpar(fontsize = 10),
+            heatmap_legend_param = list(
+              title_gp = gpar(fontsize = 8, fontface = "bold"),
+              labels_gp = gpar(fontsize = lab_size)
+            )
+    )
+  } else {
+    Heatmap(mat,
+            col = cols,
+            clustering_distance_rows = dist,
+            clustering_method_rows = "ward.D",
+            name = var,
+            row_dend_side = "right",
+            row_names_side = "left",
+            rect_gp = gpar(col = "gray30", lwd = 0.5),
+            column_names_gp = grid::gpar(fontsize = lab_size),
+            row_names_gp = grid::gpar(fontsize = lab_size),
+            column_split = col_split_vec,
+            row_title = rti,
+            row_title_gp = gpar(fontsize = 10),
+            column_title_gp = gpar(fontsize = 10),
+            cluster_columns = FALSE,
+                        heatmap_legend_param = list(
+              title_gp = gpar(fontsize = 8, fontface = "bold"),
+              labels_gp = gpar(fontsize = lab_size)
+            ),
+            column_gap = unit(2, "mm"))
+  }
+}
+```
+
+```{r metadata_setup}
+# Metadata for all animals
+sc_meta_full <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                           sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+```
+
+# Extended Data Fig 5: WGCNA: Digesta modules
+
+```{r wgcna_RCT_modules}
+# Import data with module~phenotype significance
+module_sigs <- read.table(
+  "../results/holodoublevu/ig/both/wgcna/inspected/module_membership_trait_significance/trait_modules_of_interest.tsv",
+  header = TRUE, sep = "\t")
+
+# Rename "split" variable
+module_sigs[module_sigs$trait == "vsplit", "trait"] <- "RCT"
+
+# Exclude some meaningless trait variables (e.g. animal identifiers)
+module_sigs_trim <- subset(module_sigs,
+                           !(trait %in% c("bcms", "chosen_6", "dob", "hoko_id",
+                                          "methane_emmit", "uk_id", "dam",
+                                          "liver_group", "treatment",
+                                          "rfi_end_date")))
+
+# Better trait names for plotting
+module_sigs_trim$trait <- sub("rfi", "performance_test", module_sigs_trim$trait)
+module_sigs_trim$trait <- sc_vars[module_sigs_trim$trait]
+
+# Trim to those correlated with RCT in any layer
+RCT_modules <- subset(module_sigs, trait == "RCT" & pvalue < 0.05)
+```
+
+## Correlations between modules and metadata
+
+```{r dig_meta_cor}
+# Trim to modules with pvalue < 0.05 for RCT
+dig_mod_meta <- subset(module_sigs_trim, group_index == 1)
+dig_mod_meta <- subset(dig_mod_meta,
+                       module %in% subset(RCT_modules, group_index == 1)$module)
+dig_mod_meta_ls <- mod_cor_reorg(dig_mod_meta, "trait", "module")
+
+# RCT coefficient module order
+RCT_mod_ord <- sort(dig_mod_meta_ls[["coefficient"]]["RCT",])
+# RCT group vector
+RCT_mod_vec <- ifelse(RCT_mod_ord > 0, "RCT-B", "RCT-A")
+
+# order by RCT coefficient
+dig_mod_meta_ls[["coefficient"]] <- dig_mod_meta_ls[["coefficient"]][,names(RCT_mod_ord)]
+dig_mod_meta_ls[["pstar"]] <- dig_mod_meta_ls[["pstar"]][,names(RCT_mod_ord)]
+
+library("circlize")
+coef_cols <- colorRamp2(seq(-1, 1, 0.25),
+                        colorRampPalette(c("gray50", "white", "#49ad8b"))(9))
+
+dig_meta_hm <- custom_hm(dig_mod_meta_ls[["coefficient"]],
+                         coef_cols, "Coefficient", "euclidean",
+                         rti = "Metadata variables",
+                         lab_size = 6, stars = dig_mod_meta_ls[["pstar"]],
+                         col_split_vec = RCT_mod_vec)
+```
+
+## Pathway enrichment in modules correlated with RCT
+
+```{r wgcna_RCT_pw}
+wgcna_pw <- read.table(
+  "../results/holodoublevu/ig/both/wgcna/pathway_enrichment/pathway_enrichment.tsv",
+  header = TRUE, sep = "\t")
+# harmonize module labeling to match module correlations
+wgcna_pw$module <- paste0("ME", wgcna_pw$module)
+
+# trim to digesta modules correlated to RCT
+wgcna_pw_trim <- subset(wgcna_pw, module %in% unique(dig_mod_meta$module) &
+                          group_index == 1)
+
+# drop pathways seen only in 1 module
+wgcna_pw_trim <- subset(wgcna_pw_trim,
+                        pathway %in% names(which(table(wgcna_pw_trim$pathway) > 1)))
+
+# set up pathway classification data
+kegg_df <- read.table("../data/kegg_data.tsv", sep = "\t", header = TRUE,
+                      quote = "", comment.char = "")
+kegg_pw_class <- unique(kegg_df[,c("class", "group", "pathway")])
+kegg_pw_class$pathway <- sub(" $", "", kegg_pw_class$pathway)
+
+# Focus on "metabolism" class (as this is our main interest)
+wgcna_pw_trim <- subset(wgcna_pw_trim,
+                        pathway %in% subset(kegg_pw_class,
+                                            class == "09100 Metabolism")$pathway)
+# remove some pathways that don't make sense in context
+wgcna_pw_trim <- wgcna_pw_trim[-c(grep("photosyn", wgcna_pw_trim$pathway),
+                                  grep("various", wgcna_pw_trim$pathway, ignore.case = TRUE),
+                                  grep("drug", wgcna_pw_trim$pathway, ignore.case = TRUE)),]
+
+# Reorganise for plotting
+# adjusted p-values
+wgcna_pw_trim_c_pval <- dcast(wgcna_pw_trim[,c("pathway", "module", "p.adjust")],
+                         pathway~module, value.var = "p.adjust")
+rownames(wgcna_pw_trim_c_pval) <- wgcna_pw_trim_c_pval$pathway
+wgcna_pw_trim_c_pval$pathway <- NULL
+wgcna_pw_trim_c_pval[is.na(wgcna_pw_trim_c_pval)] <- 1
+wgcna_pw_trim_c_pstar <- stars.pval(as.matrix(wgcna_pw_trim_c_pval))
+# add empty columns for modules with no enriched pathways
+wgcna_pw_trim_c_pstar <- cbind(
+  wgcna_pw_trim_c_pstar,
+  matrix(" ",
+         nrow = nrow(wgcna_pw_trim_c_pstar),
+         ncol = length(setdiff(unique(dig_mod_meta$module),
+                               colnames(wgcna_pw_trim_c_pstar))),
+         dimnames = list(rownames(wgcna_pw_trim_c_pstar),
+                         setdiff(unique(dig_mod_meta$module),
+                                 colnames(wgcna_pw_trim_c_pstar)))))
+wgcna_pw_trim_c_pstar <- wgcna_pw_trim_c_pstar[,names(RCT_mod_ord)]
+
+# gene ratios (calculated)
+wgcna_pw_trim$GeneRatioCalc <- sapply(wgcna_pw_trim$GeneRatio, function(x)
+  as.numeric(sub("\\/.*", "", x))/as.numeric(sub(".*\\/", "", x)))
+wgcna_pw_trim_c <- dcast(wgcna_pw_trim[,c("pathway", "module", "GeneRatioCalc")],
+                         pathway~module, value.var = "GeneRatioCalc")
+rownames(wgcna_pw_trim_c) <- wgcna_pw_trim_c$pathway
+wgcna_pw_trim_c$pathway <- NULL
+wgcna_pw_trim_c[is.na(wgcna_pw_trim_c)] <- 0
+# add empty columns for modules with no enriched pathways
+wgcna_pw_trim_c <- cbind(
+  wgcna_pw_trim_c,
+  matrix(0,
+         nrow = nrow(wgcna_pw_trim_c),
+         ncol = length(setdiff(unique(dig_mod_meta$module),
+                               colnames(wgcna_pw_trim_c))),
+         dimnames = list(rownames(wgcna_pw_trim_c),
+                         setdiff(unique(dig_mod_meta$module),
+                                 colnames(wgcna_pw_trim_c)))))
+wgcna_pw_trim_c <- wgcna_pw_trim_c[,names(RCT_mod_ord)]
+
+# simplify labels
+rownames(wgcna_pw_trim_c) <- rownames(wgcna_pw_trim_c_pstar) <-
+  substr(rownames(wgcna_pw_trim_c), start = 7, stop = 100)
+
+# Plot
+dig_pw_hm <- custom_hm(as.matrix(wgcna_pw_trim_c),
+                       c("white", brewer.pal(9, "Purples")[3:9]),
+                       "Gene ratio", "binary", 6,
+                       rti = "Pathways",
+                       wgcna_pw_trim_c_pstar,
+                       col_split_vec = RCT_mod_vec)
+```
+
+## Protein abundances per species in the RCT-correlated modules
+
+```{r wgcna_RCT_tax}
+# Import list of RCT-significant proteins
+wgcna_spec_all <- read.table("../results/holodoublevu/ig/both/wgcna/species_table/species_table.tsv",
+                        header = TRUE, sep = "\t", quote = "", comment.char = "")
+wgcna_spec_all$module <- paste0("ME", wgcna_spec_all$module)
+
+# Fix species binomials
+wgcna_spec_all$tax_species_label <- ifelse(
+  !grepl(" ", wgcna_spec_all$tax_species) & !is.na(wgcna_spec_all$tax_species),
+  paste(wgcna_spec_all$tax_genus, wgcna_spec_all$tax_species),
+  wgcna_spec_all$tax_species)
+# additional fix for a few names that this misses
+wgcna_spec_all[grep("^[a-z]", wgcna_spec_all$tax_species_label),
+          "tax_species_label"] <- paste(
+            wgcna_spec_all[grep("^[a-z]", wgcna_spec_all$tax_species_label), "tax_genus"],
+            wgcna_spec_all[grep("^[a-z]", wgcna_spec_all$tax_species_label), "tax_species"])
+
+# trim to RCT correlated modules
+wgcna_spec <- subset(wgcna_spec_all, module %in% unique(dig_mod_meta$module) &
+                       group_index == 1)
+
+# Number of proteins per species per module
+spec_by_module <- dcast(wgcna_spec, tax_species_label ~ module)
+rownames(spec_by_module) <- make.names(spec_by_module$tax_species_label)
+
+# drop NAs
+spec_by_module <- spec_by_module[-grep("^NA", rownames(spec_by_module)),]
+
+# add taxonomy information
+tax_df <- unique(wgcna_spec_all[,grep("tax", colnames(wgcna_spec_all))])
+spec_by_module$tax_kingdom <- tax_df[match(spec_by_module$tax_species_label, tax_df$tax_species_label), "tax_kingdom"]
+
+# drop non-RCT modules
+spec_by_module <- spec_by_module[c("tax_species_label",
+                                   "tax_kingdom",
+                                   names(RCT_mod_vec))]
+
+# trim to taxa in more than 1 module
+spec_by_module <- spec_by_module[
+  rowSums(spec_by_module[,grep("ME", colnames(spec_by_module))]) > 1,]
+
+# Trim with kingdom-specific thresholds
+mod_tax_top <- function(kingdom, cutoff){
+  names(sort(
+    rowSums(
+        spec_by_module[spec_by_module$tax_kingdom == kingdom,
+                       grep("ME", colnames(spec_by_module))]),
+    decreasing = TRUE))[1:cutoff]
+}
+
+spec_by_module_trim <- rbind(
+  spec_by_module["Bos.taurus",],
+  spec_by_module[mod_tax_top("Fungi", 5),],
+  spec_by_module[mod_tax_top("Archaea", 5),],
+  spec_by_module[mod_tax_top("Bacteria", 10),],
+  spec_by_module[mod_tax_top("SAR/Alveolata", 10),]
+)
+
+# Set up as matrix for plotting
+spec_by_module_trim_mat <- as.matrix(
+  spec_by_module_trim[,grep("ME", colnames(spec_by_module_trim))])
+# order modules according to RCT coefficient
+spec_by_module_trim_mat <- spec_by_module_trim_mat[,names(RCT_mod_ord)]
+
+# better row labels
+rownames(spec_by_module_trim_mat) <- spec_by_module_trim$tax_species_label
+
+# Plot
+dig_hm_tax <- custom_hm(log10(spec_by_module_trim_mat+0.1),
+                       c("white", brewer.pal(9, "Blues")[3:9]),
+                       "log10(\nn + 0.1\nof proteins)", "euclidean",
+                       rti = "Species",
+                       6, stars = NULL,
+                       RCT_mod_vec)
+```
+
+## Combined plots
+
+```{r wgcna_combo, fig.width=7, fig.height=9}
+dig_ht_list <- dig_meta_hm %v% dig_pw_hm %v% dig_hm_tax
+
+ComplexHeatmap::draw(dig_ht_list,
+                     ht_gap = unit(2, "mm"))
+```
+
+# Extended Data Fig 6: WGCNA: Wall and digesta modules
+
+## Correlations between wall and digesta modules
+
+```{r dig_wall_cor}
+# wall module meta setup
+wall_mod_meta <- subset(module_sigs_trim, group_index == 4)
+wall_mod_meta <- subset(wall_mod_meta, module %in% subset(RCT_modules, group_index == 4)$module)
+
+layer_cors <- read.table("../results/holodoublevu/ig/both/wgcna/inspected/axis_couples.tsv",
+                         header = TRUE, sep = "\t")
+
+# select the digesta vs wall correlations (group index 1 + group index 4)
+layer_cors_dw <- subset(layer_cors, A_module_index == 1 & B_module_index == 4)
+
+# trim to the modules with RCT correlations
+layer_cors_dw <- subset(layer_cors_dw,
+                        A_module %in% unique(dig_mod_meta$module) &
+                          B_module %in% unique(wall_mod_meta$module))
+
+# set up data
+layer_cors_dw_ls <- lapply(mod_cor_reorg(layer_cors_dw, "A_module", "B_module"), t)
+
+# reorder columns because otherwise this doesn't seem to work right
+layer_cors_dw_ls[["coefficient"]] <- layer_cors_dw_ls[["coefficient"]][,names(RCT_mod_vec)]
+layer_cors_dw_ls[["pstar"]] <- layer_cors_dw_ls[["pstar"]][,names(RCT_mod_vec)]
+
+# plot
+cross_layer_hm <- Heatmap(layer_cors_dw_ls[["coefficient"]],
+            col = coef_cols,
+            name = "Coefficient",
+            rect_gp = gpar(col = "gray30", lwd = 0.5),
+            column_names_gp = grid::gpar(fontsize = 6),
+            row_names_gp = grid::gpar(fontsize = 6),
+            row_names_side = "left",
+            column_split = RCT_mod_vec,
+            cluster_columns = FALSE,
+            cluster_rows = FALSE,
+            column_gap = unit(2, "mm"),
+            row_title = "Wall\nmodules",
+            column_title_gp = gpar(fontsize = 10),
+            row_title_gp = gpar(fontsize = 10),
+            cell_fun = function(j, i, x, y, width, height, fill){
+              grid.text(layer_cors_dw_ls[["pstar"]][i, j],
+                        x, y,
+                        gp = gpar(fontsize = 6, col = "gray30"))},
+            show_heatmap_legend = FALSE)
+```
+
+## Wall modules and metadata
+
+```{r wall_meta_cor}
+wall_mod_meta_ls <- lapply(mod_cor_reorg(wall_mod_meta, "trait", "module"), t)
+
+wall_meta_hm <- Heatmap(wall_mod_meta_ls[["coefficient"]],
+            col = coef_cols,
+            clustering_distance_columns = "euclidean",
+            clustering_method_columns = "ward.D",
+            row_names_side = "left",
+            name = "Coefficient",
+            column_dend_side = "top",
+            column_names_side = "bottom",
+            rect_gp = gpar(col = "gray30", lwd = 0.5),
+            column_names_gp = grid::gpar(fontsize = 6),
+            row_names_gp = grid::gpar(fontsize = 6),
+            column_title_gp = gpar(fontsize = 10),
+            column_split = NULL,
+            cluster_rows = FALSE,
+            column_gap = unit(2, "mm"),
+            column_title = "Wall\nmetadata",
+            column_title_side = "bottom",
+            cell_fun = function(j, i, x, y, width, height, fill){
+              grid.text(wall_mod_meta_ls[["pstar"]][i, j],
+                        x, y,
+                        gp = gpar(fontsize = 6, col = "gray30"))},
+                        heatmap_legend_param = list(
+              title_gp = gpar(fontsize = 8, fontface = "bold"),
+              labels_gp = gpar(fontsize = 6),
+              legend_width = unit(2, "cm"),
+              direction = "horizontal"
+            ))
+```
+
+## Wall pathways
+
+```{r wgcna_RCT_pw_wall}
+# trim to digesta modules correlated to RCT
+wgcna_pw_wall_trim <- subset(wgcna_pw, module %in% unique(wall_mod_meta$module) &
+                          group_index == 4)
+
+# Focus on "metabolism" class (as this is our main interest)
+wgcna_pw_wall_trim <- subset(wgcna_pw_wall_trim,
+                        pathway %in% subset(kegg_pw_class,
+                                            class == "09100 Metabolism")$pathway)
+# remove some pathways that don't make sense in context
+wgcna_pw_wall_trim <- wgcna_pw_wall_trim[-c(
+  grep("photosyn", wgcna_pw_wall_trim$pathway),
+  grep("drug", wgcna_pw_wall_trim$pathway, ignore.case = TRUE)),]
+
+# Reorganise for plotting
+# adjusted p-values
+wgcna_pw_wall_trim_c_pval <- dcast(wgcna_pw_wall_trim[,c("pathway", "module", "p.adjust")],
+                                   pathway~module, value.var = "p.adjust")
+rownames(wgcna_pw_wall_trim_c_pval) <- wgcna_pw_wall_trim_c_pval$pathway
+wgcna_pw_wall_trim_c_pval$pathway <- NULL
+wgcna_pw_wall_trim_c_pval[is.na(wgcna_pw_wall_trim_c_pval)] <- 1
+wgcna_pw_wall_trim_c_pstar <- stars.pval(as.matrix(wgcna_pw_wall_trim_c_pval))
+
+# gene ratios (calculated)
+wgcna_pw_wall_trim$GeneRatioCalc <- sapply(wgcna_pw_wall_trim$GeneRatio, function(x)
+  as.numeric(sub("\\/.*", "", x))/as.numeric(sub(".*\\/", "", x)))
+wgcna_pw_wall_trim_c <- dcast(wgcna_pw_wall_trim[,c("pathway", "module", "GeneRatioCalc")],
+                         pathway~module, value.var = "GeneRatioCalc")
+rownames(wgcna_pw_wall_trim_c) <- wgcna_pw_wall_trim_c$pathway
+wgcna_pw_wall_trim_c$pathway <- NULL
+wgcna_pw_wall_trim_c[is.na(wgcna_pw_wall_trim_c)] <- 0
+
+# simplify labels
+rownames(wgcna_pw_wall_trim_c) <- rownames(wgcna_pw_wall_trim_c_pstar) <-
+  substr(rownames(wgcna_pw_wall_trim_c_pstar), start = 7, stop = 100)
+
+# Plot
+wall_pw_hm <- custom_hm(as.matrix(wgcna_pw_wall_trim_c),
+                       c("white", brewer.pal(9, "Purples")[3:9]),
+                       "Gene ratio", "binary", 6,
+                       stars = wgcna_pw_wall_trim_c_pstar)
+
+ # sp cols
+pw_cols <- colorRamp2(seq(0, 0.05, 0.01),
+                      c("white", brewer.pal(9, "Purples")[3:7]))
+
+wall_pw_hm <- Heatmap(t(as.matrix(wgcna_pw_wall_trim_c)),
+            col = pw_cols,
+            clustering_distance_columns = "binary",
+            clustering_method_columns = "ward.D",
+            name = "Gene ratio",
+            column_dend_side = "top",
+            column_names_side = "bottom",
+            row_names_side = "left",
+            rect_gp = gpar(col = "gray30", lwd = 0.5),
+            column_names_gp = grid::gpar(fontsize = 6),
+            row_names_gp = grid::gpar(fontsize = 6),
+            column_split = NULL,
+            cluster_rows = FALSE,
+            column_title_gp = gpar(fontsize = 10),
+            column_gap = unit(2, "mm"),
+            column_title = "Wall\npathways",
+            column_title_side = "bottom",
+            cell_fun = function(j, i, x, y, width, height, fill){
+              grid.text(t(wgcna_pw_wall_trim_c_pstar)[i, j],
+                        x, y,
+                        gp = gpar(fontsize = 6, col = "gray30"))},
+            heatmap_legend_param = list(
+              title_gp = gpar(fontsize = 8, fontface = "bold"),
+              labels_gp = gpar(fontsize = 6),
+                            legend_width = unit(2, "cm"),
+              direction = "horizontal"
+            ))
+```
+
+## Wall species
+
+```{r wgcna_RCT_tax_wall}
+# trim to RCT correlated modules
+wgcna_spec_wall <- subset(wgcna_spec_all,
+                          module %in% unique(wall_mod_meta$module) &
+                            group_index == 4)
+
+# Number of proteins per species per module
+spec_by_module_wall <- dcast(wgcna_spec_wall, tax_species_label ~ module)
+rownames(spec_by_module_wall) <- make.names(spec_by_module_wall$tax_species_label)
+
+# drop NAs
+spec_by_module_wall <- spec_by_module_wall[-grep("^NA", rownames(spec_by_module_wall)),]
+
+# trim to taxa with more than 2 total protein (very low threshold...)
+spec_by_module_wall <- spec_by_module_wall[
+  rowSums(spec_by_module_wall[,grep("ME", colnames(spec_by_module_wall))]) > 2,]
+
+# Set up as matrix for plotting
+spec_by_module_wall_mat <- as.matrix(
+  spec_by_module_wall[,grep("ME", colnames(spec_by_module_wall))])
+
+# better row labels
+rownames(spec_by_module_wall_mat) <- spec_by_module_wall$tax_species_label
+
+# sp cols
+spec_cols <- colorRamp2(c(0, 2, 4, 6, 210),
+                        c("white", brewer.pal(9, "Blues")[c(2, 4, 6, 8)]))
+
+# Plot
+wall_hm_tax <- Heatmap(t(spec_by_module_wall_mat),
+            col = spec_cols,
+            clustering_distance_columns = "canberra",
+            clustering_method_columns = "ward.D",
+            name = "n of proteins",
+            column_dend_side = "top",
+            column_names_side = "bottom",
+            row_names_side = "left",
+            rect_gp = gpar(col = "gray30", lwd = 0.5),
+            column_names_gp = grid::gpar(fontsize = 6),
+            row_names_gp = grid::gpar(fontsize = 6),
+            column_split = NULL,
+            column_title_gp = gpar(fontsize = 10),
+            cluster_rows = FALSE,
+            column_title = "Wall\nspecies",
+            column_title_side = "bottom",
+            heatmap_legend_param = list(
+              title_gp = gpar(fontsize = 8, fontface = "bold"),
+              labels_gp = gpar(fontsize = 6),
+              legend_width = unit(2, "cm"),
+              color_bar = "discrete",
+              nrow = 1,
+              at = rev(c(0, 2, 4, 6, 210))
+            ))
+```
+
+## Combined
+
+```{r wgcna_combo_wall, fig.width=6.33, fig.height=3.33}
+# List of plots
+wall_ht_list <- wall_meta_hm + wall_pw_hm + wall_hm_tax
+
+# Draw
+draw(wall_ht_list,
+     heatmap_legend_side = "bottom",
+     legend_gap = unit(2.5, "cm"))
+```
+
+# All heatmaps that include digesta
+
+```{r wgcna_combo_all, fig.width=7, fig.height=10}
+dig_ht_list2 <- dig_meta_hm %v% dig_pw_hm %v% dig_hm_tax %v% cross_layer_hm
+
+draw(dig_ht_list2,
+    ht_gap = unit(2, "mm"))
+```

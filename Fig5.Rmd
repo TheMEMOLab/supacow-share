@@ -1,0 +1,118 @@
+---
+title: "| Fig 5 (MAPP panel) for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+mainfont: Arial
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("gtools")
+library("cowplot")
+library("reshape2")
+library("ggpubr")
+library("matrixStats")
+library("Hmisc")
+
+# Custom generic functions
+source("fig_functions.R")
+```
+
+```{r mapp_plot, fig.width=5, fig.height=4, dev='cairo_pdf'}
+# Import MAPP result data
+mapp_df <- as.data.frame(readRDS(
+  "../data/MAPP/newcastle_mapp_normalized_53S_longer.rds"))
+mapp_df$animal <- as.numeric(mapp_df$animal)
+mapp_df$locus <- mapp_df$solution <- NULL
+mapp_df_t6 <- subset(mapp_df, timepoint == "T6")
+
+# Import MAPP probe information
+mapp_probes <- as.data.frame(
+  readRDS("../data/MAPP/probelibrary_plantprobes_v3.rds"))
+rownames(mapp_probes) <- make.names(mapp_probes$probe)
+mapp_probes <- subset(mapp_probes, probe %in% unique(mapp_df_t6$probe))
+
+# Focus on the NaOH extraction
+mapp_df_t6_naoh <- dcast(subset(mapp_df_t6, extraction == "NaOH"),
+                         animal ~ probe, value.var = "normalized_count")
+colnames(mapp_df_t6_naoh) <- make.names(colnames(mapp_df_t6_naoh))
+
+# Add animal metadata
+sc_meta <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                      sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+mapp_df_t6_naoh <- merge(mapp_df_t6_naoh, sc_meta, by = "animal")
+
+# Differential abundance per probe
+mapp_df_t6_naoh_p <- basic_rct_wilcox(mapp_df_t6_naoh,
+                                      rownames(mapp_probes))
+mapp_df_t6_naoh_p <- mapp_df_t6_naoh_p[sort(rownames(mapp_df_t6_naoh_p)),]
+
+# Focus on those with an uncorrected p < 0.05
+mapp_df_t6_naoh_p_trim <- subset(mapp_df_t6_naoh_p, p < 0.05)
+mapp_df_t6_naoh_p_trim$star <- stars.pval(mapp_df_t6_naoh_p_trim$p)
+
+# Summary data
+mapp_summary <- do.call("rbind", lapply(c("A", "B"), function(x){
+  res <- sapply(subset(mapp_df_t6_naoh, RCT == x)[,mapp_df_t6_naoh_p_trim$feature],
+                summary)
+  res <- as.data.frame(t(res))
+  res$probe <- rownames(res)
+  res$RCT <- x
+  return(res)
+  }))
+
+# Add probe details
+mapp_summary <- merge(mapp_summary, mapp_probes[,c("probe", "specificity")])
+# Manual fixes for specificities
+mapp_summary$specificity <- capitalize(
+  sub("GlcA in\nAGP glycan",
+      "Glucuronic acid in\nalpha-1-acid glycoprotein glycan",
+      sub("segments in\n", "\nsegments in ",
+          sub("assoc", "\nassociated with",
+              sub("in ", "in\n",
+                  sub(" present", "",
+                      mapp_summary$specificity))))))
+
+# Add p-value stars
+mapp_df_t6_naoh_p_trim$probe <- mapp_df_t6_naoh_p_trim$feature
+mapp_summary <- merge(mapp_summary, mapp_df_t6_naoh_p_trim[,c("probe", "star")],
+                      by = "probe")
+mapp_summary$star <- sub("\\.", "·", mapp_summary$star)
+
+# Order variables by RCT-B median
+mapp_summary$specificity <- factor(
+  mapp_summary$specificity,
+  levels = subset(mapp_summary, RCT == "B")[
+    order(subset(mapp_summary, RCT == "B")$Median), "specificity"])
+
+# Plot
+ggplot(mapp_summary, aes(y = specificity, fill = RCT)) +
+  geom_errorbar(aes(xmin = `1st Qu.`, xmax = `3rd Qu.`),
+                position = position_dodge(width = 0.5),
+                width = 0.3) +
+  geom_point(aes(x = Median), shape = 23,
+             size = 2.5,
+             position = position_dodge(width = 0.5)) +
+  scale_fill_manual(values = RCT_cols) +
+  ylab(NULL) + xlab("MAPP intensity") +
+  theme_classic(base_size = 10) +
+  xlim(0, 35) +
+  geom_text(aes(label = star), x = 0, size = 6) +
+  theme(legend.position = c(0.9, 0.2),
+        legend.box.background = element_rect(color = "black"),
+        axis.text.y = element_text(size = 9),
+        panel.grid.major.y = element_line(color = "gray90"))
+```

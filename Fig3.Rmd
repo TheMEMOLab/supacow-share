@@ -1,0 +1,601 @@
+---
+title: "| Fig3 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+urlcolor: blue
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+
+# High resolution for figures
+knitr::opts_chunk$set(dpi=400)
+
+# Required packages
+library("tidyverse")
+library("data.table")
+library("Hmisc")
+library("gridExtra")
+library("cowplot")
+library("reshape2")
+library("ggpubr")
+library("phyloseq")
+library("DESeq2")
+library("openxlsx")
+
+# Custom generic functions
+source("fig_functions.R")
+```
+
+```{r meta_setup}
+# Import metadata
+meta_ch24 <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                        sep = "\t", header = TRUE, stringsAsFactors = TRUE)
+meta_ch24 <- subset(meta_ch24, chosen_24 == TRUE)
+rownames(meta_ch24) <- paste0("D",
+                              ifelse(nchar(meta_ch24$animal) > 1,
+                                     meta_ch24$animal,
+                                     paste0("0", meta_ch24$animal)),
+                                     "T6")
+```
+
+# Panels a & b
+
+## Metagenomics: Wilcoxon for MAG relative abundance
+
+```{r mag_data_setup}
+# Data setup
+mag_coverm <- read.table("../data/metagenomics/Abundance.coverM.tsv", sep = "\t",
+                         header = TRUE, row.names = 1)
+mag_coverm_t6 <- mag_coverm[, grep("T6", colnames(mag_coverm))]
+
+# Set up relative abundance data
+mag_ra_t6 <- mag_coverm_t6[,grep("Relative.Abundance", colnames(mag_coverm_t6))]
+colnames(mag_ra_t6) <- sub(".R1.*", "", colnames(mag_ra_t6))
+
+# Set up taxonomy
+mag_tax <- read.table("../data/SupaCowTaxTotal.tsv", sep = "\t",
+                      header = TRUE, row.names = 1)
+mag_tax <- mag_tax[rownames(mag_ra_t6),]
+rownames(mag_tax) <- rownames(mag_ra_t6)
+
+mag_names <- rownames(mag_ra_t6)[2:nrow(mag_ra_t6)]
+
+# Set up data frame for stats
+mag_ra_t6_df <- as.data.frame(t(mag_ra_t6))
+mag_ra_t6_df$sample <- rownames(mag_ra_t6_df)
+mag_ra_t6_df$animal <- as.numeric(sub("D", "", sub("T6", "", mag_ra_t6_df$sample)))
+mag_ra_t6_df <- merge(mag_ra_t6_df, meta_ch24, by = "animal")
+```
+
+```{r mag_wilcox}
+# Run simple comparisons
+mag_rct_da <- basic_rct_wilcox(mag_ra_t6_df, mag_names)
+colnames(mag_rct_da)[grep("feature", colnames(mag_rct_da))] <- "MAG"
+
+# Add taxonomy details
+mag_tax$MAG <- rownames(mag_tax)
+mag_rct_da <- merge(mag_rct_da, mag_tax[,c(2:8, 11)], by = "MAG")
+```
+
+```{r mag_wilcox_export}
+# Export results (first worksheet in differential abundance excel table)
+da_results_export <- createWorkbook()
+addWorksheet(da_results_export, "metaG_bac_arc")
+writeData(da_results_export, "metaG_bac_arc", mag_rct_da)
+```
+
+## Metatranscriptomics: DESeq2
+
+Due to large number of features in the full table of annotated features/counts, these are handled separately per taxonomic group.
+
+```{r metat_import}
+# Full data import
+metat_annot <- fread("../data/transcriptomics/MetaT.RawCounts.Annotated.zerotrim.csv",
+                    data.table = FALSE)
+```
+
+### Bacteria & archaea (MAGs)
+
+```{r mt_ds2_mags, cache.lazy=FALSE}
+# Subset data to archaea and bacteria
+mag_metat <- subset(metat_annot, Kingdom %in% c("Archaea", "Bacteria"))
+
+# Simple taxonomy table (combined)
+mt_mag_tax_simpl <- unique(
+  mag_metat[,c("Kingdom", "Phylum", "Class",
+               "Order", "Family", "Genus",
+               "Species", "sample")])
+rownames(mt_mag_tax_simpl) <- mt_mag_tax_simpl$sample
+
+# Reorganize
+mag_metat_m <- melt(
+  mag_metat[,c(grep("T6", colnames(mag_metat), value = TRUE),
+               "Gene_ID", "sample")])
+
+# Summarize per MAG
+mt_df_mags_tax <- dcast(mag_metat_m, variable ~ sample,
+                        value.var = "value", fun.aggregate = sum)
+rownames(mt_df_mags_tax) <- mt_df_mags_tax$variable
+mt_df_mags_tax$variable <- NULL
+mt_df_mags_tax <- t(mt_df_mags_tax)
+
+# Make DESeq2 object
+mt_df_t6_mag_dds <- DESeqDataSetFromMatrix(
+  countData = mt_df_mags_tax,
+  colData = meta_ch24[colnames(mt_df_mags_tax),],
+  design = ~RCT)
+
+# Run comparisons
+mt_df_t6_mag_res <- results(DESeq(mt_df_t6_mag_dds))
+mt_df_t6_mag_res$up_in <- ifelse(mt_df_t6_mag_res$log2FoldChange > 0,
+                                "Enriched in\nRCT-B",
+                                "Enriched in\nRCT-A")
+
+# Add taxonomy
+mt_df_t6_mag_res <- data.frame(
+  mt_df_t6_mag_res,
+  mt_mag_tax_simpl[rownames(mt_df_t6_mag_res),])
+```
+
+```{r mag_mt_da_export}
+# Add full table to excel export
+addWorksheet(da_results_export, "metaT_bac_arc")
+writeData(da_results_export, "metaT_bac_arc", mt_df_t6_mag_res)
+```
+
+### Eukaryotes (ciliates & fungi)
+
+```{r mt_ds2_euks}
+# Subset data to Eukaryotes (fungi & protozoa)
+euk_metat <- subset(metat_annot, Kingdom == "Protozoa" | Kingdom == "Fungi")
+
+# Simplified taxon information
+mt_euk_tax_simpl <- unique(
+  euk_metat[,c("Kingdom", "Phylum", "Class",
+                  "Order", "Family", "Genus",
+                  "Species", "sample")])
+rownames(mt_euk_tax_simpl) <- mt_euk_tax_simpl$sample
+# Better format for Species labels
+mt_euk_tax_simpl[grep(" ", mt_euk_tax_simpl$Species, invert = TRUE),
+  "Species"] <- do.call("paste",
+                        mt_euk_tax_simpl[
+                          grep(" ", mt_euk_tax_simpl$Species, invert = TRUE),
+                       c("Genus", "Species")])
+
+# Summarize counts per taxon
+mt_df_euk_m <- melt(
+  euk_metat[,c(grep("T6", colnames(euk_metat), value = TRUE),
+                  "Gene_ID", "sample")])
+mt_df_euk_tax <- dcast(mt_df_euk_m, variable ~ sample,
+                      value.var = "value", fun.aggregate = sum)
+rownames(mt_df_euk_tax) <- mt_df_euk_tax$variable
+mt_df_euk_tax$variable <- NULL
+mt_df_euk_tax <- t(mt_df_euk_tax)
+
+# Make DESeq2 object
+mt_df_t6_euk_dds <- DESeqDataSetFromMatrix(
+  countData = mt_df_euk_tax,
+  colData = meta_ch24[colnames(mt_df_euk_tax),],
+  design = ~RCT)
+
+# Run comparisons
+mt_df_euk_ds_res <- results(DESeq(mt_df_t6_euk_dds))
+mt_df_euk_ds_res$up_in <- ifelse(mt_df_euk_ds_res$log2FoldChange > 0,
+                                 "Enriched in\nRCT-B",
+                                 "Enriched in\nRCT-A")
+
+# Add taxonomy to results
+mt_df_euk_ds_res <- data.frame(
+  mt_df_euk_ds_res,
+  mt_euk_tax_simpl[rownames(mt_df_euk_ds_res),])
+```
+
+```{r euk_mt_da_export}
+# Add full table to excel export
+addWorksheet(da_results_export, "metaT_Eukarya")
+writeData(da_results_export, "metaT_Eukarya", mt_df_euk_ds_res)
+```
+
+## Metaproteomics: Wilcoxon for sum of intensity per taxon/animal
+
+```{r mp_wilcox}
+# Import table of values without missing value imputation
+mp_raw_file <- "../data/proteomics/proteomics_rawintensity_annotation_taxonomy.tsv"
+mp_raw_df <- fread(mp_raw_file, sep = "\t", data.table = FALSE)
+
+# Trim to T6 digesta, exclude any cow proteins
+mp_raw_dig_t6 <- subset(mp_raw_df, source == "D" & timepoint == "T6" &
+                          database_short != "dbB")
+
+# Fix one genome name that's inconsistent across layers
+mp_raw_dig_t6[grep("Thea", mp_raw_dig_t6$genome), "genome"] <- "Ent_caudatum"
+
+# Sums per taxon + animal
+metap_raw_sums <- reshape2::dcast(mp_raw_dig_t6, genome ~ animal,
+                                  value.var = "intensity",
+                                  fun.aggregate = sum, na.rm = TRUE)
+rownames(metap_raw_sums) <- metap_raw_sums$genome
+metap_raw_sums$genome <- NULL
+
+# Fix rownames
+rownames(metap_raw_sums) <- make.names(rownames(metap_raw_sums))
+
+# Add metadata
+metap_raw_sums_df <- as.data.frame(t(metap_raw_sums))
+metap_raw_sums_df$animal <- rownames(metap_raw_sums_df)
+metap_raw_sums_df <- merge(metap_raw_sums_df,
+                           meta_ch24, by = "animal")
+
+# Run simple comparisons
+metap_rct_da <- basic_rct_wilcox(metap_raw_sums_df,
+                                 rownames(metap_raw_sums))
+colnames(metap_rct_da)[grep("feature",
+                            colnames(metap_rct_da))] <- "genome"
+
+# Add taxonomy information
+mp_tax <- unique(mp_raw_dig_t6[,c("genome",
+                                  grep("tax", colnames(mp_raw_dig_t6), 
+                                       value = TRUE))])
+mp_tax$genome <- make.names(mp_tax$genome)
+metap_rct_da_tax <- merge(
+  metap_rct_da,
+  mp_tax,
+  by = "genome")
+
+# Harmonize colnames for combining with the other tables
+colnames(metap_rct_da_tax)[grep("tax", colnames(metap_rct_da_tax))] <- capitalize(
+  sub("tax_", "",
+      colnames(metap_rct_da_tax)[grep("tax", colnames(metap_rct_da_tax))]))
+
+# Fix species taxonomy format for ciliates
+metap_rct_da_tax[metap_rct_da_tax$Domain == "Eukaryota", "Species"] <-
+ paste(metap_rct_da_tax[metap_rct_da_tax$Domain == "Eukaryota", "Genus"],
+       metap_rct_da_tax[metap_rct_da_tax$Domain == "Eukaryota", "Species"])
+```
+
+```{r mp_da_export}
+# Add results table to excel export
+addWorksheet(da_results_export, "metaP")
+writeData(da_results_export, "metaP", metap_rct_da_tax)
+
+# Finalize export to excel
+saveWorkbook(da_results_export, "../results/supp_tables/diff_abunds_tax.xlsx",
+             overwrite = TRUE)
+```
+
+## a. Combined results for bacteria & archaea
+
+```{r mag_gen_sigs}
+# set cutoff for multiple comparison corrected p-value
+p_cutoff <- 0.05
+
+da_gen_omic_summary <- rbind(
+  data.frame(table(subset(mag_rct_da, padj < p_cutoff)[,c("Genus", "up_in")]),
+             data = "metaG"),
+  data.frame(table(subset(mt_df_t6_mag_res, padj < p_cutoff)[,c("Genus", "up_in")]),
+             data = "metaT"),
+  data.frame(table(subset(metap_rct_da_tax, padj < p_cutoff &
+                              Domain != "Eukaryota")[,c("Genus", "up_in")]),
+             data = "metaP"))
+
+# Trim taxa not ever seen as differentially abundant
+da_gen_omic_summary <- subset(da_gen_omic_summary, Freq > 0)
+
+# Trim to those genera that are supported by at least two omics in 
+# the same direction
+da_gen_omic_cons <- table(da_gen_omic_summary$Genus, da_gen_omic_summary$up_in)
+da_gen_omic_cons_gen <- unique(c(
+  names(which(da_gen_omic_cons[,1] > 1)),
+  names(which(da_gen_omic_cons[,2] > 1))))
+da_gen_omic_summary <- subset(da_gen_omic_summary, Genus %in% da_gen_omic_cons_gen)
+
+# Directional frequency numbers for color gradient differentiating groups
+da_gen_omic_summary$Freq_fill <- ifelse(da_gen_omic_summary$up_in == "Enriched in\nRCT-A",
+                                        da_gen_omic_summary$Freq,
+                                        -da_gen_omic_summary$Freq)
+
+# Order by total n of significant features per genus
+da_gen_totals <- aggregate(Freq~Genus, da_gen_omic_summary, sum)
+da_gen_totals <- da_gen_totals[order(da_gen_totals$Freq),]
+da_gen_omic_summary$Genus <- factor(da_gen_omic_summary$Genus,
+                                    levels =  as.character(da_gen_totals$Genus))
+
+# Categorical color variable (manually selected breaks)
+da_gen_omic_summary$Freq_fill_cat <- cut(
+  da_gen_omic_summary$Freq_fill,
+  breaks = c(-60, -10, -5, -2, -0.5, 0.5, 1, 5, 10, 20))
+
+# Set up color scale
+freq_fill_cols <- setNames(c("#49ad8b", "#A4D6C5", "#D2EBE2", "#f7fcfa", "white",
+                             "gray95", "gray80", "gray70", "gray55"),
+                         levels(da_gen_omic_summary$Freq_fill_cat))
+
+# Add a facet to indicate total n of MAGs per level
+mag_totals <- table(mag_tax$Genus)
+mag_totals <- mag_totals[names(mag_totals) %in% da_gen_omic_summary$Genus]
+da_gen_omic_summary <- rbind(da_gen_omic_summary,
+      data.frame(
+        Genus = names(mag_totals),
+        up_in = "total n\nof taxa",
+        Freq = as.vector(mag_totals),
+        data = "all",
+        Freq_fill = NA,
+        Freq_fill_cat = NA))
+
+# Order omic levels
+da_gen_omic_summary$data <- factor(da_gen_omic_summary$data,
+                                   levels =  c("all", "metaG",
+                                               "metaT", "metaP"))
+
+# Order column facets
+da_gen_omic_summary$up_in <- factor(da_gen_omic_summary$up_in,
+                               levels = c("total n\nof taxa",
+                                          "Enriched in\nRCT-A",
+                                          "Enriched in\nRCT-B"))
+
+# Order rows by group preference
+# (simple sum of frequencies, counting A as positive and B as negative)
+mag_tax_order <- aggregate(Freq_fill ~ Genus, da_gen_omic_summary, sum)
+mag_tax_order <- mag_tax_order[order(mag_tax_order$Freq_fill),]
+da_gen_omic_summary$Genus <- factor(da_gen_omic_summary$Genus,
+                                    levels = mag_tax_order$Genus)
+
+# Set up italics in taxon labels
+mag_gen_labels <- ifelse(grepl("[0-9]", levels(da_gen_omic_summary$Genus)),
+                         levels(da_gen_omic_summary$Genus),
+                         parse(
+                             text = paste0(
+                               "italic('",
+                               as.character(levels(da_gen_omic_summary$Genus)), "')")))
+
+# Plot
+hm_mags <- ggplot(da_gen_omic_summary,
+       aes(x = data, y = Genus, fill = Freq_fill_cat)) +
+  geom_tile(color = "gray70") +
+  geom_text(color = "gray25", size = 2, aes(label = Freq)) +
+  scale_y_discrete(labels = mag_gen_labels) +
+  ylab(NULL) + xlab(NULL) +
+  theme_classic(base_size = 9) +
+  scale_fill_manual(values = freq_fill_cols,
+                    na.value = "white") +
+  facet_grid(.~up_in, space = "free", scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        plot.title = element_text(face = "bold", size = 12),
+        legend.position = "none")
+```
+
+## b. Combined results for ciliates
+
+```{r sag_gen_sigs}
+# Put together metaT and metaP results
+cil_sp_omic_summary <- rbind(
+  data.frame(table(subset(mt_df_euk_ds_res, padj < p_cutoff &
+                            Kingdom == "Protozoa")[,c("Species", "up_in")]),
+             data = "metaT"),
+  data.frame(table(subset(metap_rct_da_tax, padj < p_cutoff &
+                            Kingdom == "SAR/Alveolata")[,c("Species", "up_in")]),
+             data = "metaP"))
+
+# Remove taxa that are never differentially abundant
+cil_sp_omic_summary <- subset(cil_sp_omic_summary, Freq > 0)
+
+# Trim to those species seen more than once
+cil_totals <- aggregate(Freq~Species, cil_sp_omic_summary, sum)
+cil_sp_omic_summary <- subset(cil_sp_omic_summary,
+                              Species %in%
+                                subset(cil_totals, Freq > 1)$Species)
+
+# Directional numbers for color gradient differentiating groups
+cil_sp_omic_summary$Freq_fill <- ifelse(cil_sp_omic_summary$up_in == "Enriched in\nRCT-A",
+                                        cil_sp_omic_summary$Freq,
+                                        -cil_sp_omic_summary$Freq)
+
+# Categorical color variable (manually picked breaks)
+cil_sp_omic_summary$Freq_fill_cat <- cut(
+  cil_sp_omic_summary$Freq_fill,
+  breaks = c(-5, -2, -0.5, 0.5, 1, 5, 10))
+
+# Add number of SAGs per species in reference
+sag_totals <- table(mt_euk_tax_simpl$Species)
+sag_totals <- sag_totals[names(sag_totals) %in% cil_sp_omic_summary$Species]
+cil_sp_omic_summary <- rbind(
+  cil_sp_omic_summary,
+    data.frame(
+        Species = names(sag_totals),
+        up_in = "total n\nof taxa",
+        Freq = as.vector(sag_totals),
+        data = "all",
+        Freq_fill = NA,
+        Freq_fill_cat = NA)
+)
+
+# Order column facets
+cil_sp_omic_summary$up_in <- factor(cil_sp_omic_summary$up_in,
+                                    levels = c("total n\nof taxa",
+                                               "Enriched in\nRCT-A",
+                                               "Enriched in\nRCT-B"))
+# Order omic levels
+cil_sp_omic_summary$data <- factor(cil_sp_omic_summary$data,
+                                   levels =  c("all", "metaT", "metaP"))
+
+# Order rows by group preference
+sag_tax_order <- aggregate(Freq_fill ~ Species, cil_sp_omic_summary, sum)
+sag_tax_order <- sag_tax_order[order(sag_tax_order$Freq_fill),]
+cil_sp_omic_summary$Species <- factor(cil_sp_omic_summary$Species,
+                                      levels = sag_tax_order$Species)
+
+# Plot
+hm_sags <- ggplot(cil_sp_omic_summary,
+       aes(x = data, y = Species, fill = Freq_fill_cat)) +
+  geom_tile(color = "gray70") +
+  geom_text(color = "gray25", size = 2, aes(label = Freq)) +
+  ylab(NULL) + xlab(NULL) +
+  theme_classic(base_size = 9) +
+  scale_fill_manual(values = freq_fill_cols,
+                    na.value = "white") +
+  facet_grid(.~up_in, space = "free", scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.text.y = element_text(face = "italic"),
+        plot.title = element_text(face = "bold", size = 12),
+        legend.position = "none")
+```
+
+# Panels b & c
+
+## c. MetaT
+
+```{r cil_abunds}
+# VST transform data
+mt_t6_cil_vst <- varianceStabilizingTransformation(
+  DESeqDataSetFromMatrix(
+  countData = mt_df_euk_tax,
+  colData = meta_ch24[colnames(mt_df_euk_tax),],
+  design = ~1))
+
+# Put together data frame
+mt_df_t6_vst_cil <- as.data.frame(assay(mt_t6_cil_vst))
+# Species info for summaries
+mt_df_t6_vst_cil$spec <- rownames(mt_df_t6_vst_cil)
+mt_df_t6_vst_cil$spec <- sub("\\.SAG.*", "", mt_df_t6_vst_cil$spec)
+# Fix one species name (from older reference genome) to match the rest:
+mt_df_t6_vst_cil$spec <- sub("Ent_caudatum",
+                             "Entodinium.caudatum",
+                             mt_df_t6_vst_cil$spec)
+
+# Summarize data per species
+mt_df_t6_vst_cil_spec <- reshape2::dcast(
+  reshape2::melt(mt_df_t6_vst_cil),
+  spec~variable, value.var = "value", sum)
+rownames(mt_df_t6_vst_cil_spec) <- mt_df_t6_vst_cil_spec$spec
+mt_df_t6_vst_cil_spec$spec <- NULL
+mt_df_t6_vst_cil_spec <- as.data.frame(t(mt_df_t6_vst_cil_spec))
+mt_df_t6_vst_cil_spec$sample <- rownames(mt_df_t6_vst_cil_spec)
+mt_df_t6_vst_cil_spec$animal <- as.numeric(sub("T6", "",
+                                               sub("D", "",
+                                                   rownames(mt_df_t6_vst_cil_spec))))
+# Add metadata details
+mt_df_t6_vst_cil_spec <- merge(
+  mt_df_t6_vst_cil_spec,
+  meta_ch24,
+  by = "animal")
+
+# Summary values for plotting
+top_cil <- as.character(unique(cil_sp_omic_summary$Species))
+mt_df_t6_vst_cil_spec$animal <- factor(mt_df_t6_vst_cil_spec$animal)
+colnames(mt_df_t6_vst_cil_spec) <- sub("\\.", " ",
+                                       colnames(mt_df_t6_vst_cil_spec))
+cil_mt_summary <- rct_med_iqr(
+  subset(mt_df_t6_vst_cil_spec[,c("RCT", "animal",
+                               intersect(colnames(mt_df_t6_vst_cil_spec),
+                                         top_cil))]))
+cil_mt_summary$taxon <- factor(cil_mt_summary$res.variable,
+                               levels = levels(cil_sp_omic_summary$Species))
+
+# Plot
+cil_abund_mt <- ggplot(cil_mt_summary,
+                       aes(y = taxon, fill = RCT)) +
+  geom_errorbar(aes(xmin = `X1st.Qu.`, xmax = `X3rd.Qu.`),
+                position = position_dodge(width = 0.5),
+                width = 0.3) +
+  geom_point(aes(x = Median), shape = 23, size = 1,
+             position = position_dodge(width = 0.5)) +
+  scale_fill_manual(values = RCT_cols,
+                    name = "RCT",
+                    labels = c("A", "B")) +
+  ylab(NULL) + xlab("Metatranscriptomic\nabundance (VST count)") +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "none",
+        axis.title.x = element_text(size = 8),
+        axis.text.y = element_text(face = "italic"),
+        plot.title = element_text(face = "bold", size = 12),
+        panel.grid.major.y = element_line(color = "gray90"))
+```
+
+## d. MetaP
+
+```{r mp_cil_diff}
+# Trim metaP summary data to ciliates only
+mp_df_cil <- metap_raw_sums_df[,c("animal",
+                                  "Ent_caudatum",
+                                  grep("SAG", colnames(metap_raw_sums_df),
+                                       value = TRUE))]
+rownames(mp_df_cil) <- mp_df_cil$animal
+mp_df_cil$animal <- NULL
+mp_df_cil <- as.data.frame(t(mp_df_cil))
+
+# Species info for summaries
+mp_df_cil$spec <- rownames(mp_df_cil)
+mp_df_cil$spec <- sub("Ent_caudatum", "Entodinium.caudatum",
+                      sub("\\.SAG.*", "", mp_df_cil$spec))
+
+# Summarize data per species
+mp_df_cil_spec <- reshape2::dcast(
+  reshape2::melt(mp_df_cil),
+  spec~variable, value.var = "value", sum)
+rownames(mp_df_cil_spec) <- mp_df_cil_spec$spec
+mp_df_cil_spec$spec <- NULL
+
+# Add animal details
+mp_df_cil_spec <- as.data.frame((t(mp_df_cil_spec)))
+mp_df_cil_spec$animal <- rownames(mp_df_cil_spec)
+mp_df_cil_spec <- merge(
+  mp_df_cil_spec,
+  meta_ch24,
+  by = "animal")
+
+# Summary values for plotting
+colnames(mp_df_cil_spec) <- sub("\\.", " ", colnames(mp_df_cil_spec))
+cil_mp_summary <- rct_med_iqr(mp_df_cil_spec[,c("RCT", "animal", top_cil)])
+cil_mp_summary$taxon <- factor(cil_mp_summary$res.variable,
+                             levels = levels(cil_sp_omic_summary$Species))
+
+# Simplify values for plotting
+cil_mp_summary$Q1_per_M <- cil_mp_summary$X1st.Qu./1000000
+cil_mp_summary$Q3_per_M <- cil_mp_summary$X3rd.Qu./1000000
+cil_mp_summary$Median_per_M <- cil_mp_summary$Median/1000000
+
+# Plot
+cil_abund_mp <- ggplot(cil_mp_summary,
+                       aes(y = taxon, fill = RCT)) +
+  geom_errorbar(aes(xmin = Q1_per_M, xmax = Q3_per_M),
+                position = position_dodge(width = 0.5),
+                width = 0.3) +
+  geom_point(aes(x = Median_per_M), shape = 23, size = 1,
+             position = position_dodge(width = 0.5)) +
+  scale_fill_manual(values = RCT_cols,
+                    name = "RCT",
+                    labels = c("A", "B")) +
+  ylab(NULL) + xlab("Metaproteomic abundance\n(sum intensity/1,000,000)") +
+  theme_classic(base_size = 9) +
+  theme(legend.position = "bottom",
+        legend.box.background = element_rect(color = "black"),
+        plot.title = element_text(face = "bold", size = 12),
+        legend.justification = 0.9,
+        legend.box.spacing = unit(4, "mm"),
+        legend.margin = margin(2, 2, 2, 2),
+        axis.title.x = element_text(size = 8),
+        axis.text.y = element_text(face = "italic"),
+        panel.grid.major.y = element_line(color = "gray90"))
+```
+
+# Combined plot
+
+```{r fig3, fig.width=7, fig.height=8}
+plot_grid(
+  hm_mags + ggtitle("a"),
+  plot_grid(
+    hm_sags + ggtitle("b"),
+    cil_abund_mt + ggtitle("c"),
+    cil_abund_mp + ggtitle("d") +
+      theme(legend.position = "none"),
+    get_legend(cil_abund_mp),
+    ncol = 1, rel_heights = c(1, 1, 1, 0.15)),
+  nrow = 1, rel_widths = c(0.52, 0.48))
+```

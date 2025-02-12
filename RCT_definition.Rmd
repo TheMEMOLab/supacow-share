@@ -1,0 +1,152 @@
+---
+title: "| Rumen Community Type definition for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+author: "VTEA"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo=TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+```
+
+# Setup
+
+```{r packages}
+# load packages
+library("vegan")
+library("ape")
+library("reshape2")
+library("ggplot2")
+library("cowplot")
+library("mia")
+library("miaViz")
+library("bluster")
+library("gtools")
+library("ggpubr")
+```
+
+```{r meta_import}
+# Import metadata
+meta_df <- read.table("../data/sample_data/metadata_v1.7.tsv",
+                      sep = "\t", header = TRUE)
+# NB: This script has been updated to use a newer metadata file
+# that already includes the RCT classifications; it was, obviously,
+# not available when the present analysis was first written and run.
+
+# Sample/rownames for matching with other data
+rownames(meta_df) <- paste0("D",
+                            ifelse(nchar(meta_df$animal) == 1,
+                                   paste0("0", meta_df$animal),
+                                   meta_df$animal), "T6")
+```
+
+# DMM clustering for 16S data from timepoint 6
+
+```{r dmm_clust_asv_setup}
+# Import data
+dada2_16s <- read.csv("../data/16S/tax_counts_GTDBref.csv",
+                      row.names = 1)
+dada2_counts <- dada2_16s[,grep("MQ", colnames(dada2_16s))]
+
+# Fix sample names
+dnas_meta <- read.csv("../data/16S/dnasense_meta.csv")
+dnas_meta$ampliconSample <- make.names(dnas_meta$seqID)
+rownames(dnas_meta) <- dnas_meta[,"ampliconSample"]
+colnames(dada2_counts) <- dnas_meta[colnames(dada2_counts), "sampleName"]
+
+# Trim rare taxa
+dada2_counts_trim <- dada2_counts[
+  rowSums(dada2_counts > 0) > round(ncol(dada2_counts)/10),]
+# Trim to T6
+dada2_counts_trim <- dada2_counts_trim[,grep("T6", colnames(dada2_counts_trim))]
+# Drop any zero taxa after timepoint trim
+dada2_counts_trim <- dada2_counts_trim[rowSums(dada2_counts_trim) != 0, ]
+
+# Set up SE object
+sc_asv_se <- SummarizedExperiment(
+  assays = list(counts = dada2_counts_trim),
+  rowData = dada2_16s[rownames(dada2_counts_trim), 1:8],
+  colData = meta_df[colnames(dada2_counts_trim),])
+```
+
+```{r dmm_clust_asv, fig.width=4, fig.height=3}
+# Set seed for reproducibility
+set.seed(2475873)
+
+# Cluster
+dmmres_asv <- cluster(sc_asv_se, name = "DMM",
+                      DmmParam(k = 1:10, type = "laplace"),
+                      MARGIN = "samples", full = TRUE)
+
+# Plot result for estimated number of components
+plotDMNFit(dmmres_asv, type = "laplace", name = "DMM") +
+    scale_x_continuous(breaks = c(1:10)) +
+    theme(panel.grid.minor = element_blank())
+```
+
+Laplace metric recommends 2 components, which matches the visually obvious clustering seen in preliminary analyses.
+
+Visualization of the 2 clusters with both PCoA and NMDS.
+
+```{r dmm_clust_res_asv, fig.width=10, fig.height=7}
+# Calculate distance matrix
+t6_ra_asv <- t(prop.table(as.matrix(dada2_counts_trim), 2))
+t6_ra_asv_dist <- vegdist(t6_ra_asv, method = "robust.aitchison")
+
+# NMDS ordination
+nmds_roba_ra_asv <- metaMDS(t6_ra_asv_dist, method = "NMDS", trace = FALSE)
+nmds_roba_ra_asv_df <- cbind(nmds_roba_ra_asv$points,
+                             meta_df[rownames(nmds_roba_ra_asv$points),])
+colnames(nmds_roba_ra_asv_df) <- gsub("MDS", "Axis\\.", colnames(nmds_roba_ra_asv_df))
+
+# Add clustering results
+nmds_roba_ra_asv_df$dmm_clust_asv <- colData(dmmres_asv)$clusters[rownames(nmds_roba_ra_asv_df)]
+
+# PCoA
+pcoa_roba_ra_asv <- pcoa(t6_ra_asv_dist)
+pcoa_roba_ra_asv_df <- cbind(pcoa_roba_ra_asv$vectors[,1:2],
+                             meta_df[rownames(nmds_roba_ra_asv$points),])
+pcoa_roba_ra_asv_df$dmm_clust_asv <- colData(dmmres_asv)$clusters[rownames(pcoa_roba_ra_asv_df)]
+
+ord_dfs_asv <- list(PCOA_16s = pcoa_roba_ra_asv_df,
+                    NMDS_16s = nmds_roba_ra_asv_df)
+
+# Plot both
+plot_grid(plotlist = lapply(names(ord_dfs_asv), function(df){
+  ggplot(data = ord_dfs_asv[[df]],
+         aes(x = Axis.1, y = Axis.2,
+             label = animal,
+             color = dmm_clust_asv,
+             shape = dmm_clust_asv)) +
+    geom_point() +
+    geom_text(nudge_x = 0.2, nudge_y = 0.2, size = 3) +
+    theme_bw() +
+    coord_fixed() +
+    scale_color_manual(values = c("#66cdaa", "#BFBFBF")) +
+    labs(x = "Axis 1", y = "Axis 2",
+         title = paste0(sub("_.*", "", df), ", T6 16S relative abundances"),
+         subtitle = "robust Aitchison distances, DMM clustering") +
+    theme(legend.position = "bottom",
+          panel.grid = element_blank())
+}))
+```
+
+Export these clusters (for incorporating into metadata table):
+
+```{r vsplit_dmm_export_asv}
+# Set up clusters as data frame
+dmm_clust_out_asv <- data.frame(sample = rownames(colData(dmmres_asv)),
+                                dmm_cluster = colData(dmmres_asv)$clusters)
+
+# Export
+write.table(dmm_clust_out_asv,
+            "../results/supacow_split_asvs_dmm.tsv", quote = FALSE,
+            sep = "\t", row.names = FALSE)
+# NB: This exported table is not shared anywhere due to the exact same
+# cluster information being a part of the main metadata file:
+# column "RCT" in "metadata_v1.7.tsv"
+```
