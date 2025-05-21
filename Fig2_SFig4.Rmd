@@ -98,8 +98,8 @@ asv_pcoa <- ggplot(data = pcoa_asv_df,
   geom_point(size = 2) +
   theme_bw(base_size = 8) +
   coord_fixed() +
-  scale_fill_manual(values = RCT_cols, name = "Rumen\nCommunity\nType") +
-  scale_shape_manual(values = RCT_shapes, name = "Rumen\nCommunity\nType") +
+  scale_fill_manual(values = RCT_cols, name = "Rumen\nCommunity\nType (RCT)") +
+  scale_shape_manual(values = RCT_shapes, name = "Rumen\nCommunity\nType (RCT)") +
   labs(x = paste("Axis1:", round(pcoa_asv_res$pcoa$values$Relative_eig[1]*100), "% variance"),
        y = paste("Axis2:", round(pcoa_asv_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
   theme(panel.grid = element_blank(),
@@ -150,8 +150,8 @@ mag_pcoa <- ggplot(data = pcoa_mag_df,
   geom_point(size = 2) +
   theme_bw(base_size = 8) +
   coord_fixed() +
-  scale_fill_manual(values = RCT_cols, name = "RCT\n(from 16S data)") +
-  scale_shape_manual(values = RCT_shapes, name = "RCT\n(from 16S data)") +
+  scale_fill_manual(values = RCT_cols, name = "RCT") +
+  scale_shape_manual(values = RCT_shapes, name = "RCT") +
   labs(x = paste("Axis1:", round(pcoa_mag_res$pcoa$values$Relative_eig[1]*100), "% variance"),
        y = paste("Axis2:", round(pcoa_mag_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
   theme(panel.grid = element_blank(),
@@ -727,11 +727,13 @@ dig_pc_loadings_top_trim$tax_label <- sapply(
 # Manual fix for one special case ("Isotricha sp YL-2021a")
 dig_pc_loadings_top_trim[dig_pc_loadings_top_trim$tax_label == "Isotricha sp YL-2021a",
                          "tax_label"] <- "*Isotricha* sp. YL-2021a"
+# Order by frequency
+dig_pc_loadings_top_trim <- dig_pc_loadings_top_trim[order(dig_pc_loadings_top_trim$Freq_dir,
+                                                           decreasing = TRUE),]
 # Fix level ordering to put "other" last
 dig_pc_loadings_top_trim$tax_label <- factor(dig_pc_loadings_top_trim$tax_label,
                                              levels = c(
-                                               setdiff(
-                                                 sort(unique(dig_pc_loadings_top_trim$tax_label)), "other"),
+                                               setdiff(unique(dig_pc_loadings_top_trim$tax_label), "other"),
                                              "other"))
 
 # Plot taxon summary panel
@@ -797,16 +799,21 @@ pca_exports_list <- c(
 write.xlsx(pca_exports_list, "../results/supp_tables/dig_pca_res.xlsx", rowNames = TRUE)
 ```
 
+# SFig 4: Taxonomic summaries of all loadings
 
-# Plotting loadings
+Instead of simple counts of species seen in the top 100 loadings, summarize values of loadings per taxon, and convert to percent contribution to either the negative or the positive side.
 
 ```{r loadings_summary, fig.width=10, fig.height=8}
-# for revisions: instead of simple counts of species seen,
-# summarize actual values of loadings per taxon
-
 # metaT
+# label for negative/positive contribution
 dig_metat_pc_loadings$side <- ifelse(dig_metat_pc_loadings$loading < 0,
                                      "negative", "positive")
+# Fix "db" to separate bacteria and archaea
+dig_metat_pc_loadings$db <- ifelse(dig_metat_pc_loadings$Kingdom == "Bacteria",
+                                   "Bacteria",
+                                   ifelse(dig_metat_pc_loadings$Kingdom == "Archaea",
+                                          "Archaea",
+                                          dig_metat_pc_loadings$db))
 # Convert to percent of contribution to PC1 (by feature), by side
 dig_metat_pc_loadings <- rbind(
   data.frame(subset(dig_metat_pc_loadings, side == "positive"),
@@ -817,8 +824,15 @@ dig_metat_pc_loadings <- rbind(
                                abs(sum(subset(dig_metat_pc_loadings, side == "negative")$loading)))))
 
 # metaP
+# label for negative/positive contribution
 dig_metap_pc_loadings$side <- ifelse(dig_metap_pc_loadings$loading < 0,
                                      "negative", "positive")
+# Fix "db" to separate bacteria and archaea
+dig_metap_pc_loadings$db <- ifelse(dig_metap_pc_loadings$tax_kingdom == "Bacteria",
+                                   "Bacteria",
+                                   ifelse(dig_metap_pc_loadings$tax_kingdom == "Archaea",
+                                          "Archaea",
+                                          dig_metap_pc_loadings$db))
 # Convert to percent of contribution to PC1 (by feature), by side
 dig_metap_pc_loadings <- rbind(
   data.frame(subset(dig_metap_pc_loadings, side == "positive"),
@@ -829,7 +843,6 @@ dig_metap_pc_loadings <- rbind(
                                abs(sum(subset(dig_metap_pc_loadings, side == "negative")$loading)))))
 
 # Put together
-
 dig_pc_loadings_per_tax <- rbind(
   data.frame(
     aggregate(load_contrib ~ db + tax + side,
@@ -840,46 +853,30 @@ dig_pc_loadings_per_tax <- rbind(
               data = dig_metap_pc_loadings, FUN = "sum"),
     source = "Digesta metaproteomics"))
 
+# Reorder levels
 dig_pc_loadings_per_tax$source <- factor(dig_pc_loadings_per_tax$source,
                                          levels = c("Digesta metatranscriptomics",
                                                     "Digesta metaproteomics"))
 # Fix/simplify discrepant naming
 dig_pc_loadings_per_tax[dig_pc_loadings_per_tax$tax == "Ruminococcus_E", "tax"] <- "Ruminococcus"
-
-# order by sum of contribution
-dig_pc_loadings_per_tax <- dig_pc_loadings_per_tax[order(dig_pc_loadings_per_tax$load_contrib),]
-dig_pc_loadings_per_tax$tax <- factor(dig_pc_loadings_per_tax$tax,
-                                      levels = rev(unique(dig_pc_loadings_per_tax$tax)))
-
-# total loadings (untrimmed) for the whole PCA
-ggplot(dig_pc_loadings_per_tax,
-         aes(y = tax, x = load_contrib, fill = side)) +
-    geom_col(stat = "identity",
-             position = position_dodge2(width = 1, preserve = "single")) +
-    ylab(NULL) + xlab(NULL) +
-    theme_classic(base_size = 8) +
-    scale_fill_manual(values = RCT_cols) +
-    facet_grid(db~source, scale = "free", space = "free") +
-    theme(plot.title = element_text(face = "bold", size = 12),
-            legend.position = "none")
 ```
 
-```{r pc_load_domain, fig.width=10, fig.height=2.5}
-# Instead of per-taxon, show summaries per database / domain + side:
+## Summaries per domain
+
+```{r pc_load_domain}
 dig_pc_loadings_per_domain <- aggregate(load_contrib ~ db + side + source,
                                         dig_pc_loadings_per_tax,
                                         sum)
 dig_pc_loadings_per_domain$db <- factor(dig_pc_loadings_per_domain$db,
                                         levels = c("Host", "Fungi",
                                                    "Protozoa",
-                                                   "Bacteria and Archaea"))
+                                                   "Bacteria", "Archaea"))
 
 contribs_p_domain <- ggplot(dig_pc_loadings_per_domain,
          aes(y = db, x = load_contrib*100, fill = side)) +
-    geom_col(stat = "identity",
-             position = position_dodge2(width = 1, preserve = "single")) +
+    geom_col(position = position_dodge2(width = 1, preserve = "single")) +
   ylab(NULL) +
-  xlab("% contribution to PC1 loadings") +
+  xlab("% of PC1 explained") +
     theme_bw(base_size = 8) +
     scale_fill_manual(values = rev(RCT_cols)) +
     facet_grid(.~source, scale = "free", space = "free") +
@@ -888,173 +885,63 @@ contribs_p_domain <- ggplot(dig_pc_loadings_per_domain,
           strip.background = element_rect(fill = "white"))
 ```
 
-```{r pc_load_trim, fig.width=10, fig.height=8}
-# trimming: keep only those taxa that have a total contribution
-# of more than 1% (0.01) in at least one side/source
+## Summaries per genus (prokaryotes) / species (protozoa)
+
+Showing those taxa that have a total contribution of more than 1% to at least one omic + side (negative/positive).
+
+```{r pc_load_trim}
 top_contrib_tax <- unique(
   subset(dig_pc_loadings_per_tax, load_contrib > 0.01)$tax)
-dig_pc_loadings_per_tax_trim <- subset(dig_pc_loadings_per_tax,
-                                       tax %in% top_contrib_tax)
+dig_pc_loadings_per_tax_trim <- subset(dig_pc_loadings_per_tax, tax %in% top_contrib_tax)
 
-# Order levels by total contribution across everything
-top_contrib_order <- aggregate(load_contrib ~ tax,
+# Order domain labels
+dig_pc_loadings_per_tax_trim$db <- factor(dig_pc_loadings_per_tax_trim$db,
+                                          levels = c("Archaea", "Bacteria",
+                                                     "Protozoa", "Host"))
+
+# Fix label for host
+dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$db == "Host", "tax"] <- "Bos taurus"
+
+# Set up italics for taxon labels
+dig_pc_loadings_per_tax_trim$tax_label <- sapply(
+  as.character(dig_pc_loadings_per_tax_trim$tax), function(x)
+    ifelse(
+      (x %in% grep("[0-9]", levels(dig_pc_loadings_per_tax_trim$tax), value = TRUE) | x == "other"),
+         x,
+         paste0("*", x, "*")))
+# Manual fix for one special case ("Isotricha sp YL-2021a")
+dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$tax_label == "Isotricha sp YL-2021a",
+                         "tax_label"] <- "*Isotricha* sp. YL-2021a"
+
+# Order taxon labels by total contribution across everything
+top_contrib_order <- aggregate(load_contrib ~ tax_label,
                                dig_pc_loadings_per_tax_trim,
                                sum)
 top_contrib_order <- top_contrib_order[order(top_contrib_order$load_contrib),]
 
-dig_pc_loadings_per_tax_trim$tax <- factor(dig_pc_loadings_per_tax_trim$tax,
-                                           levels = top_contrib_order$tax)
+dig_pc_loadings_per_tax_trim$tax_label <- factor(dig_pc_loadings_per_tax_trim$tax_label,
+                                                 levels = top_contrib_order$tax_label)
 
+# Plot
 contribs_p_genus <- ggplot(dig_pc_loadings_per_tax_trim,
-         aes(y = tax, x = load_contrib, fill = side)) +
-    geom_col(stat = "identity",
-             position = position_dodge2(width = 1, preserve = "single")) +
-    ylab(NULL) +
-    xlab("% contribution to PC1 loadings") +
-    theme_bw(base_size = 8) +
-    scale_fill_manual(values = rev(RCT_cols)) +
-    facet_grid(db~source, scale = "free_y", space = "free_y") +
-    theme(plot.title = element_text(face = "bold", size = 12),
-          panel.grid.minor = element_blank(),
-          strip.background = element_rect(fill = "white"))
+                           aes(y = tax_label, x = load_contrib*100, fill = side)) +
+  geom_col(position = position_dodge2(preserve = "single")) +
+  ylab(NULL) +
+  xlab("% of PC1 explained") +
+  theme_bw(base_size = 8) +
+  scale_fill_manual(values = rev(RCT_cols)) +
+  facet_grid(db~source, scale = "free_y", space = "free_y") +
+  theme(axis.text.y = element_markdown(),
+        plot.title = element_text(face = "bold", size = 12),
+        strip.text.y = element_text(angle = 0),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill = "white"))
 ```
 
-```{r}
-# combo
-plot_grid(contribs_p_domain,
-          contribs_p_genus,
-          ncol = 1, rel_heights = c(0.2, 0.8), align = "hv", axis = "l")
+```{r pca_ext_fig, fig.width=7, fig.height=9}
+plot_grid(
+  contribs_p_domain + ggtitle("a"),
+  contribs_p_genus + ggtitle("b"),
+  ncol = 1, rel_heights = c(0.2, 0.8),
+  align = "v", axis = "lr")
 ```
-
-```{r loadings_summary}
-# trim (top per side+source)
-dig_pc_loadings_per_tax_trim <- rbind(
-  head(subset(dig_pc_loadings_per_tax,
-         source == "Digesta_metatranscriptomics"), 10),
-  tail(subset(dig_pc_loadings_per_tax,
-         source == "Digesta_metatranscriptomics"), 10),
-  head(subset(dig_pc_loadings_per_tax,
-         source == "Digesta_metaproteomics"), 10),
-  tail(subset(dig_pc_loadings_per_tax,
-         source == "Digesta_metaproteomics"), 10))
-  
-dig_pc_loadings_per_tax_trim$tax <- factor(dig_pc_loadings_per_tax_trim$tax,
-                                      levels = sort(unique(dig_pc_loadings_per_tax_trim$tax)))
-
-ggplot(dig_pc_loadings_per_tax_trim,
-         aes(x = tax, y = source, fill = loading)) +
-    geom_tile(color = "gray70") +
-    geom_text(color = "gray25", size = 2.5, aes(label = round(loading, digits = 2))) +
-    ylab(NULL) + xlab(NULL) +
-    theme_classic(base_size = 8) +
-    scale_fill_gradient2(low = "#49ad8b",
-                         mid = "white",
-                         high = "gray10",
-                         midpoint = 0) +
-    facet_grid(side~db, scale = "free_x", space = "free_x") +
-    theme(axis.text.x = element_markdown(angle = 45, hjust = 1, vjust = 1),
-          plot.title = element_text(face = "bold", size = 12),
-          legend.position = "none")
-
-
-ggplot(dig_pc_loadings_per_tax_trim, aes(y = tax, fill = side, x = loading)) +
-    geom_bar(stat = "identity") + theme_bw() +
-    facet_grid(side~source, scale = "free", space = "free")
-
-
-# totals for protozoa vs prokaryotes:
-loadings_ag_db <- aggregate(loading ~ db + side + source, dig_pc_loadings_per_tax, "sum")
-
-ggplot(loadings_ag_db, aes(y = db, fill = side, x = loading)) +
-    geom_bar(stat = "identity") + theme_bw() +
-    facet_grid(side~source, scale = "free", space = "free")
-```
-
-
-
-
-```{r loadings_summary}
-# for revisions: instead of simple counts of species seen,
-# summarize actual values of loadings per taxon
-# IN the top 100 loadings (as seen in Fig 2g) per side only!
-
-dig_pc_loadings_top100 <- rbind(
-  data.frame(
-    dig_metat_pc_loadings[
-      order(dig_metat_pc_loadings$loading)[1:100], c("tax", "db", "loading")],
-    side = "negative",
-    source = "Digesta_metatranscriptomics"),
-  data.frame(
-    dig_metat_pc_loadings[
-      order(dig_metat_pc_loadings$loading, decreasing = TRUE)[1:100], c("tax", "db", "loading")],
-    side = "positive",
-    source = "Digesta_metatranscriptomics"),
-  data.frame(
-    dig_metap_pc_loadings[
-      order(dig_metap_pc_loadings$loading)[1:100], c("tax", "db", "loading")],
-    side = "negative",
-    source = "Digesta_metaproteomics"),
-  data.frame(
-    dig_metap_pc_loadings[
-      order(dig_metap_pc_loadings$loading, decreasing = TRUE)[1:100], c("tax", "db", "loading")],
-    side = "positive",
-    source = "Digesta_metaproteomics"))
-
-# Fix/simplify discrepant naming
-dig_pc_loadings_top100[dig_pc_loadings_top100$tax == "Ruminococcus_E", "tax"] <- "Ruminococcus"
-
-# sums of loadings per taxa
-dig_pc_loadings_top100_a <- aggregate(loading ~ db + tax + source + side,
-                                      data = dig_pc_loadings_top100, FUN = "sum")
-
-# order by sum of loadings
-dig_pc_loadings_top100_a <- dig_pc_loadings_top100_a[order(dig_pc_loadings_top100_a$loading),]
-
-
-ggplot(dig_pc_loadings_top100_a,
-         aes(x = tax, y = source, fill = loading)) +
-    geom_tile(color = "gray70") +
-    geom_text(color = "gray25", size = 2.5, aes(label = round(loading, digits = 2))) +
-    ylab(NULL) + xlab(NULL) +
-    theme_classic(base_size = 8) +
-    scale_fill_gradient2(low = "#49ad8b",
-                         mid = "white",
-                         high = "gray10",
-                         midpoint = 0) +
-    facet_grid(side~db, scale = "free_x", space = "free_x") +
-    theme(axis.text.x = element_markdown(angle = 45, hjust = 1, vjust = 1),
-          plot.title = element_text(face = "bold", size = 12),
-          legend.position = "none")
-
-
-
-# with "other" category matching the taxa in 2g
-dig_pc_loadings_top100_a$tax_fix <- ifelse(dig_pc_loadings_top100_a$tax %in%
-                                             dig_pc_loadings_top_trim$tax,
-                                           dig_pc_loadings_top100_a$tax,
-                                           "other")
-
-# re-aggregate
-dig_pc_loadings_top100_a2 <- aggregate(loading ~ db + tax_fix + source + side,
-                                      data = dig_pc_loadings_top100_a, FUN = "sum")
-
-ggplot(dig_pc_loadings_top100_a2,
-         aes(x = tax_fix, y = source, fill = loading)) +
-    geom_tile(color = "gray70") +
-    geom_text(color = "gray25", size = 2.5, aes(label = round(loading, digits = 2))) +
-    ylab(NULL) + xlab(NULL) +
-    theme_classic(base_size = 8) +
-    scale_fill_gradient2(low = "#49ad8b",
-                         mid = "white",
-                         high = "gray10",
-                         midpoint = 0) +
-    facet_grid(side~db, scale = "free_x", space = "free_x") +
-    theme(axis.text.x = element_markdown(angle = 45, hjust = 1, vjust = 1),
-          plot.title = element_text(face = "bold", size = 12),
-          legend.position = "none")
- 
-```
-
-
-
-

@@ -359,7 +359,7 @@ layer_cors_dw <- subset(layer_cors_dw,
 # set up data
 layer_cors_dw_ls <- lapply(mod_cor_reorg(layer_cors_dw, "A_module", "B_module"), t)
 
-# reorder columns because otherwise this doesn't seem to work right
+# reorder columns because otherwise this doesn't work right
 layer_cors_dw_ls[["coefficient"]] <- layer_cors_dw_ls[["coefficient"]][,names(RCT_mod_vec)]
 layer_cors_dw_ls[["pstar"]] <- layer_cors_dw_ls[["pstar"]][,names(RCT_mod_vec)]
 
