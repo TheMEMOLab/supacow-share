@@ -879,7 +879,7 @@ contribs_p_domain <- ggplot(dig_pc_loadings_per_domain,
   xlab("% of PC1 explained") +
     theme_bw(base_size = 8) +
     scale_fill_manual(values = rev(RCT_cols)) +
-    facet_grid(.~source, scale = "free", space = "free") +
+    facet_grid(.~source) +
     theme(plot.title = element_text(face = "bold", size = 12),
           panel.grid.minor = element_blank(),
           strip.background = element_rect(fill = "white"))
@@ -939,9 +939,8 @@ contribs_p_genus <- ggplot(dig_pc_loadings_per_tax_trim,
 ```
 
 ```{r pca_ext_fig, fig.width=7, fig.height=9}
-plot_grid(
-  contribs_p_domain + ggtitle("a"),
-  contribs_p_genus + ggtitle("b"),
-  ncol = 1, rel_heights = c(0.2, 0.8),
-  align = "v", axis = "lr")
+plot_grid(contribs_p_domain + ggtitle("a"),
+          contribs_p_genus + ggtitle("b"),
+          ncol = 1, rel_heights = c(0.2, 0.8),
+          align = "v", axis = "lr")
 ```

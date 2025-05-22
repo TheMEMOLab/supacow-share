@@ -32,7 +32,7 @@ This script uses the PCA results from `Fig2.Rmd` for selecting taxa of interest,
 
 ```{r selection_lists}
 # KOs of interest - from separate curated list
-kos_of_interest <- read.csv("../data/kos_of_interest.csv")
+kos_of_interest <- read.csv("../data/2025-05_kos_of_interest.csv")
 
 # Genera of interest based on PCA loadings
 pca_res <- read.xlsx("../results/supp_tables/dig_pca_res.xlsx",
@@ -255,7 +255,7 @@ mag_da_rct <- do.call("rbind", lapply(mags_of_interest$MAG, function(x){
 mag_da_rct <- merge(mag_da_rct, mag_tax, by = "MAG")
 ```
 
-```{r summary_plot, fig.width=7, fig.height=11}
+```{r summary_plot, fig.width=8, fig.height=11}
 # Reorganize for plotting
 full_ko_res$label <- factor(paste(full_ko_res$ko,
                                   full_ko_res$abbreviation),
@@ -319,8 +319,20 @@ full_ko_res_per_genus_trim$MAG_RCT <- factor(full_ko_res_per_genus_trim$MAG_RCT,
                                                         " "))
 
 # Fix long pathway labels
-full_ko_res_per_genus_trim$pathway <- gsub(" ", "\n",
-                                     full_ko_res_per_genus_trim$pathway)
+full_ko_res_per_genus_trim$pathway <- gsub("acetyl-CoA to\nethanol",
+                                           "acetyl-\nCoA to\nethanol",
+                                           gsub("via\n", "via ",
+                                                gsub("\nto", " to",
+                                                     gsub(" ", "\n",
+                                                          full_ko_res_per_genus_trim$pathway))))
+full_ko_res_per_genus_trim$pathway <- factor(full_ko_res_per_genus_trim$pathway,
+                                             levels = c("pyruvate to\nacetate",
+                                                        "acetyl-CoA to\nbutyrate",
+                                                        "pyruvate to\npropionate\nvia acrylate",
+                                                        "pyruvate to\npropionate\nvia succinate",
+                                                        "acetyl-\nCoA to\nethanol",
+                                                        "Wood-Ljungdahl\nPathway",
+                                                        "WLP\nadditional"))
 
 # added symbol to highlight the manually curated functions
 full_ko_res_per_genus_trim[
@@ -329,10 +341,27 @@ full_ko_res_per_genus_trim[
     full_ko_res_per_genus_trim$data %in% c("metaG", "metaT"),
   "pres_abs"] <- "1*"
 
+# Set RCT color fills for facets
+# (using lighter versions for text visibility,
+# organized as required by the ggh4x package / theme_nested)
+facet_fills <- c("gray85",
+                 "#b6ded1",
+                 "white",
+                 rep("gray85",
+                     length(
+                       unique(
+                         subset(full_ko_res_per_genus_trim,
+                                MAG_RCT == "Enriched in\nRCT-A")$Genus_label))),
+                 rep("#b6ded1",
+                     length(
+                       unique(
+                         subset(full_ko_res_per_genus_trim,
+                                MAG_RCT == "Enriched in\nRCT-B")$Genus_label))),
+                 "white")
+
 plot_grid(plotlist = lapply(
-  list(c("acetate", "butyrate", "propionate\nvia\nacrylate",
-         "propionate\nvia\nsuccinate", "ethanol"),
-       c("WLP", "WLP\nadditional")), function(x)
+  list(levels(full_ko_res_per_genus_trim$pathway)[1:5],
+       levels(full_ko_res_per_genus_trim$pathway)[6:7]), function(x)
            ggplot(subset(full_ko_res_per_genus_trim,
                          pathway %in% x),
                   aes(y = data, x = label, fill = data,
@@ -346,12 +375,13 @@ plot_grid(plotlist = lapply(
                                  metaG = "gray80",
                                  reference = "gray35")) +
     facet_nested(MAG_RCT + Genus_label ~ pathway, switch = "y",
-               scales = "free", space = "free",
-               strip = strip_nested(size = "variable")) +
+                 scales = "free", space = "free",
+                 strip = strip_nested(size = "variable",
+                                      background_y = elem_list_rect(fill = facet_fills))) +
     scale_y_discrete(position = "right") +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
           strip.text.y.left = element_text(angle = 0),
-          strip.background = element_rect(fill = "white"),
+          strip.background.x = element_rect(fill = "white"),
           legend.position = "none",
           panel.grid = element_blank())),
   ncol = 1, align = "h")
