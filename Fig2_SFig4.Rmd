@@ -1,5 +1,5 @@
 ---
-title: "| Fig2 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Fig 2 & Extended Data Fig 4 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -38,7 +38,7 @@ library("openxlsx")
 source("fig_functions.R")
 ```
 
-# Panel a (16S ordination)
+# Fig 2: Panel a (16S ordination)
 
 ```{r amplicon_ordination}
 # Import ASV 16S data
@@ -111,7 +111,7 @@ asv_pcoa <- ggplot(data = pcoa_asv_df,
                                perm = 9999)[["Pr(>F)"]][1], digits = 2)))
 ```
 
-# Panel b (MAG ordination)
+# Fig 2: Panel b (MAG ordination)
 
 ```{r mag_ordination}
 # Import data
@@ -164,7 +164,7 @@ mag_pcoa <- ggplot(data = pcoa_mag_df,
                                perm = 9999)[["Pr(>F)"]][1], digits = 2)))
 ```
 
-# Panels c-f
+# Fig 2: Panels c-f
 
 ## Meta/host transcriptomics
 
@@ -562,7 +562,7 @@ pc_boxplots_host <- ggplot(subset(split_pc_vals, plot_grouping == "Host omics"),
             plot.title = element_text(face = "bold", size = 12))
 ```
 
-# Panel g
+# Fig 2: Panel g
 
 Loadings for the top contributing taxa for the most RCT-influenced PCs.
 
@@ -861,7 +861,7 @@ dig_pc_loadings_per_tax$source <- factor(dig_pc_loadings_per_tax$source,
 dig_pc_loadings_per_tax[dig_pc_loadings_per_tax$tax == "Ruminococcus_E", "tax"] <- "Ruminococcus"
 ```
 
-## Summaries per domain
+## Panel a: Summaries per domain
 
 ```{r pc_load_domain}
 dig_pc_loadings_per_domain <- aggregate(load_contrib ~ db + side + source,
@@ -885,11 +885,12 @@ contribs_p_domain <- ggplot(dig_pc_loadings_per_domain,
           strip.background = element_rect(fill = "white"))
 ```
 
-## Summaries per genus (prokaryotes) / species (protozoa)
+## Panel b: Summaries per genus (bacteria & archaea) / species (protozoa)
 
 Showing those taxa that have a total contribution of more than 1% to at least one omic + side (negative/positive).
 
 ```{r pc_load_trim}
+# Trim to taxa with >1% contribution
 top_contrib_tax <- unique(
   subset(dig_pc_loadings_per_tax, load_contrib > 0.01)$tax)
 dig_pc_loadings_per_tax_trim <- subset(dig_pc_loadings_per_tax, tax %in% top_contrib_tax)
