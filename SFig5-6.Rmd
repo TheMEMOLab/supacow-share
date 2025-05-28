@@ -1,5 +1,5 @@
 ---
-title: "| Extended Data Fig 4 + 5 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Extended Data Fig 5 + 6 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -49,7 +49,7 @@ rownames(sc_meta_24_T6) <- paste0("D",
 
 This script builds on results exported from `Fig2.Rmd` (PCAs) and `Fig3.Rmd` (differential abundance), so those must have been run before executing this file (alternatively, the results are also available as supplementary tables in the manuscript).
 
-# SFig 5
+# SFig 6
 
 ## MT
 
@@ -440,7 +440,7 @@ ComplexHeatmap::draw(tax_cor_hm_list,
                      ht_gap = unit(3, "mm"))
 ```
 
-# SFig 4
+# SFig 5
 
 ```{r ts_meta}
 # Set up metadata for selected 6 animals with time series data

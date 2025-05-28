@@ -1,5 +1,5 @@
 ---
-title: "| Fig2 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Fig 2 & Extended Data Fig 4 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -38,7 +38,7 @@ library("openxlsx")
 source("fig_functions.R")
 ```
 
-# Panel a (16S ordination)
+# Fig 2: Panel a (16S ordination)
 
 ```{r amplicon_ordination}
 # Import ASV 16S data
@@ -98,8 +98,8 @@ asv_pcoa <- ggplot(data = pcoa_asv_df,
   geom_point(size = 2) +
   theme_bw(base_size = 8) +
   coord_fixed() +
-  scale_fill_manual(values = RCT_cols, name = "Rumen\nCommunity\nType") +
-  scale_shape_manual(values = RCT_shapes, name = "Rumen\nCommunity\nType") +
+  scale_fill_manual(values = RCT_cols, name = "Rumen\nCommunity\nType (RCT)") +
+  scale_shape_manual(values = RCT_shapes, name = "Rumen\nCommunity\nType (RCT)") +
   labs(x = paste("Axis1:", round(pcoa_asv_res$pcoa$values$Relative_eig[1]*100), "% variance"),
        y = paste("Axis2:", round(pcoa_asv_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
   theme(panel.grid = element_blank(),
@@ -111,7 +111,7 @@ asv_pcoa <- ggplot(data = pcoa_asv_df,
                                perm = 9999)[["Pr(>F)"]][1], digits = 2)))
 ```
 
-# Panel b (MAG ordination)
+# Fig 2: Panel b (MAG ordination)
 
 ```{r mag_ordination}
 # Import data
@@ -150,8 +150,8 @@ mag_pcoa <- ggplot(data = pcoa_mag_df,
   geom_point(size = 2) +
   theme_bw(base_size = 8) +
   coord_fixed() +
-  scale_fill_manual(values = RCT_cols, name = "RCT\n(from 16S data)") +
-  scale_shape_manual(values = RCT_shapes, name = "RCT\n(from 16S data)") +
+  scale_fill_manual(values = RCT_cols, name = "RCT") +
+  scale_shape_manual(values = RCT_shapes, name = "RCT") +
   labs(x = paste("Axis1:", round(pcoa_mag_res$pcoa$values$Relative_eig[1]*100), "% variance"),
        y = paste("Axis2:", round(pcoa_mag_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
   theme(panel.grid = element_blank(),
@@ -164,7 +164,7 @@ mag_pcoa <- ggplot(data = pcoa_mag_df,
                                perm = 9999)[["Pr(>F)"]][1], digits = 2)))
 ```
 
-# Panels c-f
+# Fig 2: Panels c-f
 
 ## Meta/host transcriptomics
 
@@ -562,7 +562,7 @@ pc_boxplots_host <- ggplot(subset(split_pc_vals, plot_grouping == "Host omics"),
             plot.title = element_text(face = "bold", size = 12))
 ```
 
-# Panel g
+# Fig 2: Panel g
 
 Loadings for the top contributing taxa for the most RCT-influenced PCs.
 
@@ -626,7 +626,7 @@ dig_metap_pc_loadings$db <- ifelse(dig_metap_pc_loadings$database_short %in% c("
                                    ifelse(dig_metap_pc_loadings$database_short == "dbA",
                                           "Bacteria and Archaea",
                                           ifelse(dig_metap_pc_loadings$database_short == "dbB",
-                                                 "Host", "other")))
+                                                 "Host", "Fungi")))
 
 # SAGs: use species for tax summary
 dig_metap_pc_loadings[dig_metap_pc_loadings$db == "Protozoa",
@@ -727,11 +727,13 @@ dig_pc_loadings_top_trim$tax_label <- sapply(
 # Manual fix for one special case ("Isotricha sp YL-2021a")
 dig_pc_loadings_top_trim[dig_pc_loadings_top_trim$tax_label == "Isotricha sp YL-2021a",
                          "tax_label"] <- "*Isotricha* sp. YL-2021a"
+# Order by frequency
+dig_pc_loadings_top_trim <- dig_pc_loadings_top_trim[order(dig_pc_loadings_top_trim$Freq_dir,
+                                                           decreasing = TRUE),]
 # Fix level ordering to put "other" last
 dig_pc_loadings_top_trim$tax_label <- factor(dig_pc_loadings_top_trim$tax_label,
                                              levels = c(
-                                               setdiff(
-                                                 sort(unique(dig_pc_loadings_top_trim$tax_label)), "other"),
+                                               setdiff(unique(dig_pc_loadings_top_trim$tax_label), "other"),
                                              "other"))
 
 # Plot taxon summary panel
@@ -795,4 +797,151 @@ pca_exports_list <- c(
 
 # Export list of data frames to excel
 write.xlsx(pca_exports_list, "../results/supp_tables/dig_pca_res.xlsx", rowNames = TRUE)
+```
+
+# SFig 4: Taxonomic summaries of all loadings
+
+Instead of simple counts of species seen in the top 100 loadings, summarize values of loadings per taxon, and convert to percent contribution to either the negative or the positive side.
+
+```{r loadings_summary, fig.width=10, fig.height=8}
+# metaT
+# label for negative/positive contribution
+dig_metat_pc_loadings$side <- ifelse(dig_metat_pc_loadings$loading < 0,
+                                     "negative", "positive")
+# Fix "db" to separate bacteria and archaea
+dig_metat_pc_loadings$db <- ifelse(dig_metat_pc_loadings$Kingdom == "Bacteria",
+                                   "Bacteria",
+                                   ifelse(dig_metat_pc_loadings$Kingdom == "Archaea",
+                                          "Archaea",
+                                          dig_metat_pc_loadings$db))
+# Convert to percent of contribution to PC1 (by feature), by side
+dig_metat_pc_loadings <- rbind(
+  data.frame(subset(dig_metat_pc_loadings, side == "positive"),
+             load_contrib = (subset(dig_metat_pc_loadings, side == "positive")$loading /
+                               sum(subset(dig_metat_pc_loadings, side == "positive")$loading))),
+  data.frame(subset(dig_metat_pc_loadings, side == "negative"),
+             load_contrib = (abs(subset(dig_metat_pc_loadings, side == "negative")$loading) /
+                               abs(sum(subset(dig_metat_pc_loadings, side == "negative")$loading)))))
+
+# metaP
+# label for negative/positive contribution
+dig_metap_pc_loadings$side <- ifelse(dig_metap_pc_loadings$loading < 0,
+                                     "negative", "positive")
+# Fix "db" to separate bacteria and archaea
+dig_metap_pc_loadings$db <- ifelse(dig_metap_pc_loadings$tax_kingdom == "Bacteria",
+                                   "Bacteria",
+                                   ifelse(dig_metap_pc_loadings$tax_kingdom == "Archaea",
+                                          "Archaea",
+                                          dig_metap_pc_loadings$db))
+# Convert to percent of contribution to PC1 (by feature), by side
+dig_metap_pc_loadings <- rbind(
+  data.frame(subset(dig_metap_pc_loadings, side == "positive"),
+             load_contrib = (subset(dig_metap_pc_loadings, side == "positive")$loading /
+                               sum(subset(dig_metap_pc_loadings, side == "positive")$loading))),
+  data.frame(subset(dig_metap_pc_loadings, side == "negative"),
+             load_contrib = (abs(subset(dig_metap_pc_loadings, side == "negative")$loading) /
+                               abs(sum(subset(dig_metap_pc_loadings, side == "negative")$loading)))))
+
+# Put together
+dig_pc_loadings_per_tax <- rbind(
+  data.frame(
+    aggregate(load_contrib ~ db + tax + side,
+              data = dig_metat_pc_loadings, FUN = "sum"),
+    source = "Digesta metatranscriptomics"),
+  data.frame(
+    aggregate(load_contrib ~ db + tax + side,
+              data = dig_metap_pc_loadings, FUN = "sum"),
+    source = "Digesta metaproteomics"))
+
+# Reorder levels
+dig_pc_loadings_per_tax$source <- factor(dig_pc_loadings_per_tax$source,
+                                         levels = c("Digesta metatranscriptomics",
+                                                    "Digesta metaproteomics"))
+# Fix/simplify discrepant naming
+dig_pc_loadings_per_tax[dig_pc_loadings_per_tax$tax == "Ruminococcus_E", "tax"] <- "Ruminococcus"
+```
+
+## Panel a: Summaries per domain
+
+```{r pc_load_domain}
+dig_pc_loadings_per_domain <- aggregate(load_contrib ~ db + side + source,
+                                        dig_pc_loadings_per_tax,
+                                        sum)
+dig_pc_loadings_per_domain$db <- factor(dig_pc_loadings_per_domain$db,
+                                        levels = c("Host", "Fungi",
+                                                   "Protozoa",
+                                                   "Bacteria", "Archaea"))
+
+contribs_p_domain <- ggplot(dig_pc_loadings_per_domain,
+         aes(y = db, x = load_contrib*100, fill = side)) +
+    geom_col(position = position_dodge2(width = 1, preserve = "single")) +
+  ylab(NULL) +
+  xlab("% of PC1 explained") +
+    theme_bw(base_size = 8) +
+    scale_fill_manual(values = rev(RCT_cols)) +
+    facet_grid(.~source) +
+    theme(plot.title = element_text(face = "bold", size = 12),
+          panel.grid.minor = element_blank(),
+          strip.background = element_rect(fill = "white"))
+```
+
+## Panel b: Summaries per genus (bacteria & archaea) / species (protozoa)
+
+Showing those taxa that have a total contribution of more than 1% to at least one omic + side (negative/positive).
+
+```{r pc_load_trim}
+# Trim to taxa with >1% contribution
+top_contrib_tax <- unique(
+  subset(dig_pc_loadings_per_tax, load_contrib > 0.01)$tax)
+dig_pc_loadings_per_tax_trim <- subset(dig_pc_loadings_per_tax, tax %in% top_contrib_tax)
+
+# Order domain labels
+dig_pc_loadings_per_tax_trim$db <- factor(dig_pc_loadings_per_tax_trim$db,
+                                          levels = c("Archaea", "Bacteria",
+                                                     "Protozoa", "Host"))
+
+# Fix label for host
+dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$db == "Host", "tax"] <- "Bos taurus"
+
+# Set up italics for taxon labels
+dig_pc_loadings_per_tax_trim$tax_label <- sapply(
+  as.character(dig_pc_loadings_per_tax_trim$tax), function(x)
+    ifelse(
+      (x %in% grep("[0-9]", levels(dig_pc_loadings_per_tax_trim$tax), value = TRUE) | x == "other"),
+         x,
+         paste0("*", x, "*")))
+# Manual fix for one special case ("Isotricha sp YL-2021a")
+dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$tax_label == "Isotricha sp YL-2021a",
+                         "tax_label"] <- "*Isotricha* sp. YL-2021a"
+
+# Order taxon labels by total contribution across everything
+top_contrib_order <- aggregate(load_contrib ~ tax_label,
+                               dig_pc_loadings_per_tax_trim,
+                               sum)
+top_contrib_order <- top_contrib_order[order(top_contrib_order$load_contrib),]
+
+dig_pc_loadings_per_tax_trim$tax_label <- factor(dig_pc_loadings_per_tax_trim$tax_label,
+                                                 levels = top_contrib_order$tax_label)
+
+# Plot
+contribs_p_genus <- ggplot(dig_pc_loadings_per_tax_trim,
+                           aes(y = tax_label, x = load_contrib*100, fill = side)) +
+  geom_col(position = position_dodge2(preserve = "single")) +
+  ylab(NULL) +
+  xlab("% of PC1 explained") +
+  theme_bw(base_size = 8) +
+  scale_fill_manual(values = rev(RCT_cols)) +
+  facet_grid(db~source, scale = "free_y", space = "free_y") +
+  theme(axis.text.y = element_markdown(),
+        plot.title = element_text(face = "bold", size = 12),
+        strip.text.y = element_text(angle = 0),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill = "white"))
+```
+
+```{r pca_ext_fig, fig.width=7, fig.height=9}
+plot_grid(contribs_p_domain + ggtitle("a"),
+          contribs_p_genus + ggtitle("b"),
+          ncol = 1, rel_heights = c(0.2, 0.8),
+          align = "v", axis = "lr")
 ```
