@@ -95,20 +95,22 @@ pcoa_asv_df <- cbind(pcoa_asv_res$pcoa$vectors[,1:2],
 asv_pcoa <- ggplot(data = pcoa_asv_df,
                    aes(x = Axis.1, y = Axis.2,
                        shape = RCT, fill = RCT)) +
-  geom_point(size = 2) +
+  geom_point(size = 1.5) +
   theme_bw(base_size = 8) +
   coord_fixed() +
   scale_fill_manual(values = RCT_cols, name = "Rumen\nCommunity\nType (RCT)") +
   scale_shape_manual(values = RCT_shapes, name = "Rumen\nCommunity\nType (RCT)") +
   labs(x = paste("Axis1:", round(pcoa_asv_res$pcoa$values$Relative_eig[1]*100), "% variance"),
-       y = paste("Axis2:", round(pcoa_asv_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
-  theme(panel.grid = element_blank(),
-        legend.box.background = element_rect(color = "black"),
-        plot.title =  element_text(face = "bold", size = 12)) +
-  labs(caption = paste("p (PERMANOVA, RCT) = ",
+       y = paste("Axis2:", round(pcoa_asv_res$pcoa$values$Relative_eig[2]*100), "% variance"),
+       caption = paste("p (PERMANOVA, RCT) = ",
                        signif(adonis2(pcoa_asv_res[["dist"]]~RCT,
                                data = as(sample_data(asv_phy_t6), "data.frame"),
-                               perm = 9999)[["Pr(>F)"]][1], digits = 2)))
+                               perm = 9999)[["Pr(>F)"]][1], digits = 2))) +
+  theme(panel.grid = element_blank(),
+        legend.box.background = element_rect(color = "black", linewidth = 0.75),
+        panel.border = element_rect(linewidth = 0.75),
+        axis.text = element_text(color = "black"),
+        plot.title =  element_text(face = "bold", size = 12))
 ```
 
 # Fig 2: Panel b (MAG ordination)
@@ -147,21 +149,22 @@ pcoa_mag_df <- cbind(pcoa_mag_res$pcoa$vectors[,1:2],
 mag_pcoa <- ggplot(data = pcoa_mag_df,
                    aes(x = Axis.1, y = Axis.2,
                        shape = RCT, fill = RCT)) +
-  geom_point(size = 2) +
+  geom_point(size = 1.5) +
   theme_bw(base_size = 8) +
   coord_fixed() +
   scale_fill_manual(values = RCT_cols, name = "RCT") +
   scale_shape_manual(values = RCT_shapes, name = "RCT") +
   labs(x = paste("Axis1:", round(pcoa_mag_res$pcoa$values$Relative_eig[1]*100), "% variance"),
-       y = paste("Axis2:", round(pcoa_mag_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
-  theme(panel.grid = element_blank(),
-        legend.box.background = element_rect(color = "black"),
-        plot.title =  element_text(face = "bold", size = 12)) +
-  labs(title = "Digesta, MAGs",
+       y = paste("Axis2:", round(pcoa_mag_res$pcoa$values$Relative_eig[2]*100), "% variance"),
        caption = paste("p (PERMANOVA, RCT) = ",
                        signif(adonis2(pcoa_mag_res[["dist"]]~RCT,
                                data = as(sample_data(mag_phy_t6), "data.frame"),
-                               perm = 9999)[["Pr(>F)"]][1], digits = 2)))
+                               perm = 9999)[["Pr(>F)"]][1], digits = 2))) +
+  theme(panel.grid = element_blank(),
+        legend.box.background = element_rect(color = "black", linewidth = 0.75),
+        panel.border = element_rect(linewidth = 0.75),
+        axis.text = element_text(color = "black"),
+        plot.title =  element_text(face = "bold", size = 12))
 ```
 
 # Fig 2: Panels c-f
@@ -540,26 +543,28 @@ pc_boxplots_meta[[3]] <- pc_boxplots_meta[[3]] +
 pc_boxplots_host <- ggplot(subset(split_pc_vals, plot_grouping == "Host omics"),
                            aes(x = data_PC,
                                y = PC_values, fill = RCT)) +
-      geom_boxplot(outlier.shape = NA, width = 0.4) +
-      scale_fill_manual(values = RCT_cols, name = "RCT") +
-      geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1.25,
-                   position = position_dodge(width = 0.4)) +
-      xlab(NULL) + ylab("PC score") +
+  geom_boxplot(outlier.shape = NA, width = 0.4) +
+  scale_fill_manual(values = RCT_cols, name = "RCT") +
+  geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1.25,
+               position = position_dodge(width = 0.4)) +
+  xlab(NULL) + ylab("PC score") +
   facet_grid(~plot_grouping) +
-      annotate(geom = "text",
-             x = subset(split_pc_pvals, plot_grouping == "Host omics")$data_PC,
-             y = subset(split_pc_pvals, plot_grouping == "Host omics")$ypos,
-             label = subset(split_pc_pvals, plot_grouping == "Host omics")$pstar,
-             size = 4) +
-      annotate(geom = "segment",
-             x = seq(0.85, 3.85, 1),
-             xend = seq(1.15, 4.15, 1),
-             y = 17.5) +
-      theme_classic(base_size = 8) +
+  annotate(geom = "text",
+           x = subset(split_pc_pvals, plot_grouping == "Host omics")$data_PC,
+           y = subset(split_pc_pvals, plot_grouping == "Host omics")$ypos,
+           label = subset(split_pc_pvals, plot_grouping == "Host omics")$pstar,
+           size = 4) +
+  annotate(geom = "segment",
+           x = seq(0.85, 3.85, 1),
+           xend = seq(1.15, 4.15, 1),
+           y = 17.5) +
+  theme_classic(base_size = 8) +
   ggtitle("f") +
-      theme(legend.position = "bottom",
-            legend.box.background = element_rect(color = "black"),
-            plot.title = element_text(face = "bold", size = 12))
+  theme(legend.position = "right",
+        legend.box.background = element_rect(color = "black"),
+        legend.box.margin = margin(5, 5, 5, 5),
+        legend.box.spacing = unit(20, "pt"),
+        plot.title = element_text(face = "bold", size = 12))
 ```
 
 # Fig 2: Panel g
@@ -753,7 +758,7 @@ pc_loadings_tax <- ggplot(dig_pc_loadings_top_trim,
 
 # Combined plot export
 
-```{r fig2, fig.width=7, fig.height=10}
+```{r fig2, fig.width=7.0866, fig.height=8.2677}
 plot_grid(
   plot_grid(
       asv_pcoa + ggtitle("a"),
@@ -764,7 +769,8 @@ plot_grid(
     nrow = 1, align = "h"),
   pc_boxplots_host,
   pc_loadings_tax,
-  ncol = 1, rel_heights = c(1, 0.75, 0.9, 0.85))
+  ncol = 1,
+  rel_heights = c(0.27, 0.22, 0.23, 0.28))
 ```
 
 # Export PCA results for Supplementary table
@@ -904,16 +910,21 @@ dig_pc_loadings_per_tax_trim$db <- factor(dig_pc_loadings_per_tax_trim$db,
 dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$db == "Host", "tax"] <- "Bos taurus"
 
 # Set up italics for taxon labels
-dig_pc_loadings_per_tax_trim$tax_label <- sapply(
-  as.character(dig_pc_loadings_per_tax_trim$tax), function(x)
-    ifelse(
-      (x %in% grep("[0-9]", levels(dig_pc_loadings_per_tax_trim$tax), value = TRUE) | x == "other"),
-         x,
-         paste0("*", x, "*")))
+dig_pc_loadings_per_tax_trim$tax_label <- factor(dig_pc_loadings_per_tax_trim$tax)
+levels(dig_pc_loadings_per_tax_trim$tax_label) <- ifelse(grepl("[1-9]",
+                                                         levels(dig_pc_loadings_per_tax_trim$tax_label)),
+                                                   levels(dig_pc_loadings_per_tax_trim$tax_label),
+                                                   paste0("*",
+                                                          levels(dig_pc_loadings_per_tax_trim$tax_label),
+                                                          "*"))
+ 
 # Manual fix for one special case ("Isotricha sp YL-2021a")
-dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$tax_label == "Isotricha sp YL-2021a",
-                         "tax_label"] <- "*Isotricha* sp. YL-2021a"
-
+levels(dig_pc_loadings_per_tax_trim$tax_label)[
+  grep("Isotricha sp.", levels(dig_pc_loadings_per_tax_trim$tax_label))] <- sub(
+    "Isotricha", "*Isotricha*",
+    levels(dig_pc_loadings_per_tax_trim$tax_label)[
+      grep("Isotricha sp.", levels(dig_pc_loadings_per_tax_trim$tax_label))])
+  
 # Order taxon labels by total contribution across everything
 top_contrib_order <- aggregate(load_contrib ~ tax_label,
                                dig_pc_loadings_per_tax_trim,

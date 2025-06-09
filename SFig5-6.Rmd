@@ -83,10 +83,10 @@ mt_sag_tax_simpl[grep(" ", mt_sag_tax_simpl$Species, invert = TRUE),
                        c("Genus", "Species")])
 
 # Summarize counts per taxon
-mt_df_sags_m <- melt(
+mt_df_sags_m <- reshape2::melt(
   sag_metat[,c(grep("T6", colnames(sag_metat), value = TRUE),
                   "Gene_ID", "sample")])
-mt_df_sags_tax <- dcast(mt_df_sags_m, variable ~ sample,
+mt_df_sags_tax <- reshape2::dcast(mt_df_sags_m, variable ~ sample,
                         value.var = "value", fun.aggregate = sum)
 rownames(mt_df_sags_tax) <- mt_df_sags_tax$variable
 mt_df_sags_tax$variable <- NULL
@@ -107,12 +107,12 @@ mt_mag_tax_simpl <- unique(
 rownames(mt_mag_tax_simpl) <- mt_mag_tax_simpl$sample
 
 # Reorganize both
-mag_metat_m <- melt(
+mag_metat_m <- reshape2::melt(
   mag_metat[,c(grep("T6", colnames(mag_metat), value = TRUE),
                "Gene_ID", "sample")])
 
 # Put together + summarize per MAG
-mt_df_mags_tax <- dcast(mag_metat_m, variable ~ sample,
+mt_df_mags_tax <- reshape2::dcast(mag_metat_m, variable ~ sample,
                         value.var = "value", fun.aggregate = sum)
 rownames(mt_df_mags_tax) <- mt_df_mags_tax$variable
 mt_df_mags_tax$variable <- NULL
@@ -526,6 +526,7 @@ mt_cil_ts <- ggplot(mt_cil_sel_df, aes(y = value, x = timepoint,
   ggtitle("A. Metatranscriptomics") +
   ylab("expression (VST-transformed)") +
   theme(plot.title = element_text(face = "bold", size = 8),
+        strip.text.x = element_text(face = "italic"),
         legend.position = "bottom")
 ```
 
@@ -590,6 +591,7 @@ mp_cil_ts <- ggplot(cil_sp_sel_mp_df, aes(y = value, x = timepoint,
   ggtitle("B. Metaproteomics") +
   ylab("Sum of intensities") +
   theme(plot.title = element_text(face = "bold", size = 8),
+        strip.text.x = element_text(face = "italic"),
         legend.position = "bottom")
 ```
 
@@ -597,6 +599,7 @@ mp_cil_ts <- ggplot(cil_sp_sel_mp_df, aes(y = value, x = timepoint,
 
 ```{r cil_ts_combo, fig.width=7, fig.height=9}
 plot_grid(
-  mt_cil_ts, mp_cil_ts,
+  mt_cil_ts,
+  mp_cil_ts,
   ncol = 2)
 ```

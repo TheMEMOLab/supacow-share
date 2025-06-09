@@ -30,6 +30,7 @@ library("ggpubr")
 library("openxlsx")
 library("ggforce")
 library("DESeq2")
+library("ggtext")
 
 # Custom generic functions
 source("fig_functions.R")
@@ -430,11 +431,19 @@ sel_func_summary_mags_trim$func_facet <- factor(
          value = TRUE))))
 
 # Adjust longer genus names for plotting
-levels(sel_func_summary_mags_trim$Genus) <- sub("UBA", "UBA\n",
-                                                sub("RUG", "RUG\n",
-                                                    sub("Merdiplasma", "Merdi-\nplasma",
-                                                        sub("Faecousia", "Faec-\nousia",
+levels(sel_func_summary_mags_trim$Genus) <- sub("UBA", "UBA  \n",
+                                                sub("RUG", "RUG  \n",
+                                                    sub("Merdiplasma", "Merdi-   \nplasma",
+                                                        sub("Faecousia", "Faec-  \nousia",
                                                             levels(sel_func_summary_mags_trim$Genus)))))
+
+# Add italics to genus labels
+levels(sel_func_summary_mags_trim$Genus) <- ifelse(grepl("[1-9]",
+                                        levels(sel_func_summary_mags_trim$Genus)),
+                                  levels(sel_func_summary_mags_trim$Genus),
+                                  paste0("*",
+                                         levels(sel_func_summary_mags_trim$Genus),
+                                         "*"))
 
 # Plot  
 mags_func_plot <- ggplot(sel_func_summary_mags_trim,
@@ -449,6 +458,7 @@ mags_func_plot <- ggplot(sel_func_summary_mags_trim,
                scale = "free", space = "free",
                strip = strip_nested(size = "variable")) +
   theme(strip.text.y = element_text(angle = 0, size = 5),
+        strip.text.x = element_markdown(),
         axis.text.x = element_text(angle = 33, hjust = 1, vjust = 1),
         plot.title = element_text(face = "bold", size = 12),
         panel.background = element_rect(fill = "white", colour = "black"),
@@ -484,9 +494,14 @@ sel_func_summary_sags_trim <- subset(
     subset(sag_da_label_summary, value > 4)$label)
 
 # Adjust longer genus names for plotting
-levels(sel_func_summary_sags_trim$Genus) <- sub("Eremoplastron", "Eremo-\nplastron",
-                                                sub("Ostracodinium", "Ostraco-\ndinium",
+levels(sel_func_summary_sags_trim$Genus) <- sub("Eremoplastron", "Eremo-  \nplastron",
+                                                sub("Ostracodinium", "Ostraco-  \ndinium",
                                                     levels(sel_func_summary_sags_trim$Genus)))
+
+# Add italics to genus labels
+levels(sel_func_summary_sags_trim$Genus) <- paste0("*",
+                                                   levels(sel_func_summary_sags_trim$Genus),
+                                                   "*")
 
 # Adjust function facet labels for plotting
 levels(sel_func_summary_sags_trim$func_facet) <- sub(" Amorphous\ncellulose", "\nAmorphous cellulose",
@@ -507,6 +522,7 @@ sags_func_plot <- ggplot(sel_func_summary_sags_trim,
                strip = strip_nested(size = "variable")) +
   theme(strip.text.y = element_text(angle = 0, size = 5,
                                     margin = margin(b = 25, t = 25)),
+        strip.text.x = element_markdown(),
         axis.text.x = element_text(angle = 33, hjust = 1, vjust = 1),
         plot.title = element_text(face = "bold", size = 12),
         panel.background = element_rect(fill="white", colour="black"),
