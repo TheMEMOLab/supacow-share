@@ -587,7 +587,7 @@ cil_abund_mp <- ggplot(cil_mp_summary,
 
 # Combined plot
 
-```{r fig3, fig.width=7, fig.height=8}
+```{r fig3, fig.width=7.0866, fig.height=8.2677}
 plot_grid(
   hm_mags + ggtitle("a"),
   plot_grid(

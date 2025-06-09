@@ -447,6 +447,7 @@ split_pc_vals <- do.call("rbind",
     df$data <- names(split_pcs)[x]
     df$sample_type <- sub("_.*", "", names(split_pcs)[x])
     df$measurement <- capitalize(sub(".*_", "", names(split_pcs)[x]))
+    df$n_samples <- nrow(df)
     df$plot_grouping <- ifelse(df$measurement %in%
                                  c("Metatranscriptomics", "Metaproteomics"),
                                       "Metaomics",
@@ -465,7 +466,9 @@ split_pc_vals$plot_grouping <- factor(split_pc_vals$plot_grouping,
 
 # Set up further variables for plot ordering
 split_pc_vals$sampletype_PC <- paste(split_pc_vals$sample_type,
-                                     split_pc_vals$PC, sep = "\n")
+                                     split_pc_vals$PC,
+                                     paste0("(n = ", split_pc_vals$n_samples, ")"),
+                                     sep = "\n")
 split_pc_vals$sampletype_PC <- factor(split_pc_vals$sampletype_PC,
                                 levels = c(
                                   unique(grep("Digesta", split_pc_vals$sampletype_PC, value = TRUE)),
@@ -473,7 +476,9 @@ split_pc_vals$sampletype_PC <- factor(split_pc_vals$sampletype_PC,
                                   unique(grep("Liver", split_pc_vals$sampletype_PC, value = TRUE))))
 
 split_pc_vals$data_PC <- sub("_", "\n", paste(split_pc_vals$data,
-                                              split_pc_vals$PC, sep = "\n"))
+                                              split_pc_vals$PC,
+                                              paste0("(n = ", split_pc_vals$n_samples, ")"),
+                                              sep = "\n"))
 split_pc_vals$data_PC <- factor(
   split_pc_vals$data_PC,
   levels = c(
@@ -499,11 +504,6 @@ split_pc_pvals$ypos <- c(rep(18, 2),
                          rep(98, 2),
                          rep(20, 4))
 split_pc_pvals$ypos_segment <- split_pc_pvals$ypos*0.9
-# Additional adjustments to a few specific dot positions
-split_pc_pvals[split_pc_pvals$data_PC == "Wall\nmetaproteomics\nPC4", "ypos"] <-
-  split_pc_pvals[split_pc_pvals$data_PC == "Wall\nmetaproteomics\nPC4", "ypos"] + 5
-split_pc_pvals[split_pc_pvals$data_PC == "Liver\nproteomics\nPC15", "ypos"] <-
-  split_pc_pvals[split_pc_pvals$data_PC == "Liver\nproteomics\nPC15", "ypos"] - 2
 
 # Draw box plots for microbial (meta) omics
 pc_boxplots_meta <- lapply(

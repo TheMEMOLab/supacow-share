@@ -333,7 +333,7 @@ sel_func_summary$data <- factor(sel_func_summary$data,
 
 # Manual set-up for facet grouping labels
 sel_func_summary$func_facet <- ifelse(sel_func_summary$type == "CAZY",
-                                               paste0("CAZymes: ", sub("-", "-\n",
+                                               paste0("CAZy: ", sub("-", "-\n",
                                                    sub(" ", "\n",
                                           capitalize(
                                                tolower(sel_func_summary$subtype))))),
@@ -352,12 +352,12 @@ sel_func_summary$func_facet <- factor(sel_func_summary$func_facet,
 
 # Simplify CAZyme categories: grouping together everything with more than 1 substrate
 levels(sel_func_summary$func_facet)[
-  grep(",", levels(sel_func_summary$func_facet))] <- "CAZymes:\nmultiple\nsubstrates"
+  grep(",", levels(sel_func_summary$func_facet))] <- "CAZy:\nmultiple\nsubstrates"
 # Add the without-substrate ones into this category
 # as they're supposedly more generic
 levels(
   sel_func_summary$func_facet)[grep("reference",
-                                    levels(sel_func_summary$func_facet))] <- "CAZymes:\nmultiple\nsubstrates"
+                                    levels(sel_func_summary$func_facet))] <- "CAZy:\nmultiple\nsubstrates"
   
 # MAGs vs SAGs variable
 sel_func_summary$tax_db <- ifelse(
@@ -422,7 +422,7 @@ sel_func_summary_mags_trim$func_facet <- factor(
   sel_func_summary_mags_trim$func_facet,
   levels = c(
     sort(
-      grep("CAZyme",
+      grep("CAZy",
            unique(sel_func_summary_mags_trim$func_facet),
            value = TRUE)),
   sort(
@@ -459,8 +459,9 @@ mags_func_plot <- ggplot(sel_func_summary_mags_trim,
                strip = strip_nested(size = "variable")) +
   theme(strip.text.y = element_text(angle = 0, size = 5),
         strip.text.x = element_markdown(),
-        axis.text.x = element_text(angle = 33, hjust = 1, vjust = 1),
-        plot.title = element_text(face = "bold", size = 12),
+        axis.text.x = element_text(angle = 20, hjust = 1, vjust = 1),
+        panel.spacing = unit(1, "pt"),
+        plot.title = element_text(face = "bold", size = 10),
         panel.background = element_rect(fill = "white", colour = "black"),
         legend.position = "none")
 ```
@@ -493,20 +494,17 @@ sel_func_summary_sags_trim <- subset(
   label %in%
     subset(sag_da_label_summary, value > 4)$label)
 
-# Adjust longer genus names for plotting
-levels(sel_func_summary_sags_trim$Genus) <- sub("Eremoplastron", "Eremo-  \nplastron",
-                                                sub("Ostracodinium", "Ostraco-  \ndinium",
-                                                    levels(sel_func_summary_sags_trim$Genus)))
-
 # Add italics to genus labels
 levels(sel_func_summary_sags_trim$Genus) <- paste0("*",
                                                    levels(sel_func_summary_sags_trim$Genus),
                                                    "*")
 
 # Adjust function facet labels for plotting
-levels(sel_func_summary_sags_trim$func_facet) <- sub(" Amorphous\ncellulose", "\nAmorphous cellulose",
-                                                     sub(" Beta-\nmannan", "\nBeta-mannan",
-                                                         levels(sel_func_summary_sags_trim$func_facet)))
+levels(sel_func_summary_sags_trim$func_facet) <- sub("Amorphous\ncellulose",
+                                                     "Amorphous cellulose",
+                                                     sub(" Propionate\nvia succinate",
+                                                     " Propionate via succinate",
+                                                     levels(sel_func_summary_sags_trim$func_facet)))
 
 # Plot
 sags_func_plot <- ggplot(sel_func_summary_sags_trim,
@@ -523,8 +521,9 @@ sags_func_plot <- ggplot(sel_func_summary_sags_trim,
   theme(strip.text.y = element_text(angle = 0, size = 5,
                                     margin = margin(b = 25, t = 25)),
         strip.text.x = element_markdown(),
-        axis.text.x = element_text(angle = 33, hjust = 1, vjust = 1),
-        plot.title = element_text(face = "bold", size = 12),
+        axis.text.x = element_text(angle = 20, hjust = 1, vjust = 1),
+        panel.spacing = unit(1, "pt"),
+        plot.title = element_text(face = "bold", size = 10),
         panel.background = element_rect(fill="white", colour="black"),
         legend.position = "none")
 ```
@@ -628,7 +627,7 @@ saveWorkbook(func_results_export,
 
 ## Combined
 
-```{r combo_fig4, fig.width=4, fig.height=10}
+```{r combo_fig4}
 # Put together the results
 feature_comp <- rbind(
   data.frame(
@@ -663,6 +662,9 @@ feature_comp_summary <- merge(
 feature_comp_summary$star <- sub("\\.", "·", feature_comp_summary$star)
 feature_comp_summary$type <- factor(feature_comp_summary$type,
                                     levels = c("VFAs", "Untargeted metabolomics"))
+levels(feature_comp_summary$type) <- c("VFAs",
+                                       "Untargeted\nmetabolomics")
+
 # Order variables by RCT-B median
 feature_comp_summary$label <- factor(
   feature_comp_summary$label,
@@ -684,31 +686,34 @@ feature_comp_summary_trim <- subset(feature_comp_summary, star != " ")
 p_metab <- ggplot(feature_comp_summary_trim, aes(y = label, fill = RCT)) +
   geom_errorbar(aes(xmin = `1st Qu.`, xmax = `3rd Qu.`),
                 position = position_dodge(width = 0.5),
-                width = 0.3) +
-  geom_point(aes(x = Median), shape = 23,
+                width = 0.25) +
+  geom_point(aes(x = Median), shape = 23, size = 1,
              position = position_dodge(width = 0.5)) +
   scale_fill_manual(values = RCT_cols) +
   facet_col(~type, scales = "free_y",  space = "free") +
   ylab(NULL) + xlab("value (scaled)") +
   xlim(-1.5, 1.7) +
-  theme_classic(base_size = 7) +
-  geom_text(aes(label = star), x = 1.65) +
+  theme_classic(base_size = 6) +
+  geom_text(aes(label = star), x = 1.65, size = 3) +
   theme(legend.position = "bottom",
         legend.box.background = element_rect(color = "black"),
-        plot.title = element_text(face = "bold", size = 12),
-        panel.grid.major.y = element_line(color = "gray90"),
-        legend.margin = margin(0, 2, 0, 2, unit = "pt"))
+        legend.key.spacing.x = unit(2, "pt"),
+        legend.key.width = unit(5, "pt"),
+        legend.key.height = unit(3, "pt"),
+        axis.text.x = element_text(size = 6),
+        plot.title = element_text(face = "bold", size = 10),
+        panel.grid.major.y = element_line(color = "gray90"))
 ```
 
 # Combined export of all panels
 
-```{r fig4_export, fig.width=7, fig.height=11}
+```{r fig4, fig.width=7.0866, fig.height=8.2677}
 plot_grid(
   mags_func_plot + ggtitle("a"),
   plot_grid(
     sags_func_plot + ggtitle("b"),
     p_metab + ggtitle("c"),
     nrow = 1,
-    rel_widths = c(0.73, 0.27)),
-  ncol = 1, rel_heights = c(0.575, 0.425))
+    rel_widths = c(0.815, 0.185)),
+  ncol = 1, rel_heights = c(0.62, 0.38))
 ```
