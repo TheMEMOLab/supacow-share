@@ -1,5 +1,5 @@
 ---
-title: "| Extended Data Fig 5 + 6 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Supplementary Figs 5-6 and Supplementary Data 4e-f for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -47,7 +47,7 @@ rownames(sc_meta_24_T6) <- paste0("D",
                                          paste0("0", sc_meta_24_T6$animal)), "T6")
 ```
 
-This script builds on results exported from `Fig2.Rmd` (PCAs) and `Fig3.Rmd` (differential abundance), so those must have been run before executing this file (alternatively, the results are also available as supplementary tables in the manuscript).
+This script builds on results exported from `Fig2.Rmd` (PCAs) and `Fig3.Rmd` (differential abundance), so those must have been run before executing this file (alternatively, the results are also available as supplementary data in the manuscript).
 
 # SFig 6
 
@@ -83,10 +83,10 @@ mt_sag_tax_simpl[grep(" ", mt_sag_tax_simpl$Species, invert = TRUE),
                        c("Genus", "Species")])
 
 # Summarize counts per taxon
-mt_df_sags_m <- melt(
+mt_df_sags_m <- reshape2::melt(
   sag_metat[,c(grep("T6", colnames(sag_metat), value = TRUE),
                   "Gene_ID", "sample")])
-mt_df_sags_tax <- dcast(mt_df_sags_m, variable ~ sample,
+mt_df_sags_tax <- reshape2::dcast(mt_df_sags_m, variable ~ sample,
                         value.var = "value", fun.aggregate = sum)
 rownames(mt_df_sags_tax) <- mt_df_sags_tax$variable
 mt_df_sags_tax$variable <- NULL
@@ -107,12 +107,12 @@ mt_mag_tax_simpl <- unique(
 rownames(mt_mag_tax_simpl) <- mt_mag_tax_simpl$sample
 
 # Reorganize both
-mag_metat_m <- melt(
+mag_metat_m <- reshape2::melt(
   mag_metat[,c(grep("T6", colnames(mag_metat), value = TRUE),
                "Gene_ID", "sample")])
 
 # Put together + summarize per MAG
-mt_df_mags_tax <- dcast(mag_metat_m, variable ~ sample,
+mt_df_mags_tax <- reshape2::dcast(mag_metat_m, variable ~ sample,
                         value.var = "value", fun.aggregate = sum)
 rownames(mt_df_mags_tax) <- mt_df_mags_tax$variable
 mt_df_mags_tax$variable <- NULL
@@ -440,6 +440,14 @@ ComplexHeatmap::draw(tax_cor_hm_list,
                      ht_gap = unit(3, "mm"))
 ```
 
+```{r corr_export}
+# Export full correlation results
+
+write.xlsx(list(metaT = tax_cors_mt_df,
+                metaP = tax_cors_mp_df),
+           "../results/supp_tables/tax_corr_res.xlsx")
+```
+
 # SFig 5
 
 ```{r ts_meta}
@@ -523,9 +531,10 @@ mt_cil_ts <- ggplot(mt_cil_sel_df, aes(y = value, x = timepoint,
   scale_shape_manual(values = RCT_shapes) +
   theme_classic(base_size = 6) +
   guides(shape = guide_legend(ncol = 1)) +
-  ggtitle("A. Metatranscriptomics") +
-  ylab("expression (VST-transformed)") +
+  ggtitle("a") +
+  ylab("Metatranscriptomics:\nVST-transformed counts") +
   theme(plot.title = element_text(face = "bold", size = 8),
+        strip.text.x = element_text(face = "italic"),
         legend.position = "bottom")
 ```
 
@@ -587,9 +596,10 @@ mp_cil_ts <- ggplot(cil_sp_sel_mp_df, aes(y = value, x = timepoint,
   scale_shape_manual(values = RCT_shapes) +
   theme_classic(base_size = 6) +
   guides(shape = guide_legend(ncol = 1)) +
-  ggtitle("B. Metaproteomics") +
-  ylab("Sum of intensities") +
+  ggtitle("b") +
+  ylab("Metaproteomics:\nSum of LFQ intensities") +
   theme(plot.title = element_text(face = "bold", size = 8),
+        strip.text.x = element_text(face = "italic"),
         legend.position = "bottom")
 ```
 
@@ -597,6 +607,7 @@ mp_cil_ts <- ggplot(cil_sp_sel_mp_df, aes(y = value, x = timepoint,
 
 ```{r cil_ts_combo, fig.width=7, fig.height=9}
 plot_grid(
-  mt_cil_ts, mp_cil_ts,
+  mt_cil_ts,
+  mp_cil_ts,
   ncol = 2)
 ```

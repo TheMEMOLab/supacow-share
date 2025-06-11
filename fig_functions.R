@@ -26,24 +26,33 @@ sc_vars <- setNames(sub("Performance test end date", "Performance test group",
 
 # Simple Wilcoxon rank sum tests for comparing rumen community types
 basic_rct_wilcox <- function(df, vars){
-  res <- sapply(vars, function(x)
-    wilcox.test(as.formula(paste(x, "~RCT")), df)$p.value)
   
+  # Calculate test and get statistics
+  wilcoxres <- do.call("rbind", lapply(vars, function(x){
+    wc <- wilcox.test(as.formula(paste(x, "~RCT")), df)
+    data.frame(feature = x,
+               W_statistic = wc$statistic,
+               p = wc$p.value)
+    }))
+  
+  # Multiple comparison correction & additional metrics
   res <- data.frame(
-    feature = names(res),
-    p = res,
-    padj = p.adjust(res, "fdr"),
+    wilcoxres,
+    padj = p.adjust(wilcoxres$p, "fdr"),
     gr1_median = colMedians(
       as.matrix(
-        subset(df, RCT == "A")[,names(res)])),
+        subset(df, RCT == "A")[,wilcoxres$feature])),
     gr2_median = colMedians(
       as.matrix(
-        subset(df, RCT == "B")[,names(res)]))
+        subset(df, RCT == "B")[,wilcoxres$feature]))
   )
+  
+  # RCT direction
   res$up_in <- factor(
     ifelse(res$gr1_median > res$gr2_median,
            "Enriched in\nRCT-A",
            "Enriched in\nRCT-B"))
+  
   return(res)
 }
 

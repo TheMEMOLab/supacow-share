@@ -1,5 +1,5 @@
 ---
-title: "| Fig 2 & Extended Data Fig 4 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Fig 2, Supplementary Fig 4 & Supplementary Data 3 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -33,6 +33,7 @@ library("vegan")
 library("ape")
 library("DESeq2")
 library("openxlsx")
+library("rstatix")
 
 # Custom generic functions
 source("fig_functions.R")
@@ -91,24 +92,30 @@ pcoa_asv_res <- roba_ord(asv_phy_t6)
 pcoa_asv_df <- cbind(pcoa_asv_res$pcoa$vectors[,1:2],
                      sample_data(asv_phy_t6))
 
+# Calculate adonis2 p-value
+asv_pcoa_p <- adonis2(pcoa_asv_res[["dist"]]~RCT,
+                      data = as(sample_data(asv_phy_t6), "data.frame"),
+                      perm = 9999)[["Pr(>F)"]][1]
+# simplify number format
+asv_pcoa_p <- format(asv_pcoa_p, scientific = FALSE)
+
 # Plot
 asv_pcoa <- ggplot(data = pcoa_asv_df,
                    aes(x = Axis.1, y = Axis.2,
                        shape = RCT, fill = RCT)) +
-  geom_point(size = 2) +
+  geom_point(size = 1.5) +
   theme_bw(base_size = 8) +
   coord_fixed() +
   scale_fill_manual(values = RCT_cols, name = "Rumen\nCommunity\nType (RCT)") +
   scale_shape_manual(values = RCT_shapes, name = "Rumen\nCommunity\nType (RCT)") +
   labs(x = paste("Axis1:", round(pcoa_asv_res$pcoa$values$Relative_eig[1]*100), "% variance"),
-       y = paste("Axis2:", round(pcoa_asv_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
+       y = paste("Axis2:", round(pcoa_asv_res$pcoa$values$Relative_eig[2]*100), "% variance"),
+       caption = paste0("p (PERMANOVA, RCT) = ", asv_pcoa_p)) +
   theme(panel.grid = element_blank(),
-        legend.box.background = element_rect(color = "black"),
-        plot.title =  element_text(face = "bold", size = 12)) +
-  labs(caption = paste("p (PERMANOVA, RCT) = ",
-                       signif(adonis2(pcoa_asv_res[["dist"]]~RCT,
-                               data = as(sample_data(asv_phy_t6), "data.frame"),
-                               perm = 9999)[["Pr(>F)"]][1], digits = 2)))
+        legend.box.background = element_rect(color = "black", linewidth = 0.75),
+        panel.border = element_rect(linewidth = 0.75),
+        axis.text = element_text(color = "black"),
+        plot.title =  element_text(face = "bold", size = 12))
 ```
 
 # Fig 2: Panel b (MAG ordination)
@@ -143,25 +150,30 @@ pcoa_mag_res <- roba_ord(mag_phy_t6)
 pcoa_mag_df <- cbind(pcoa_mag_res$pcoa$vectors[,1:2],
                      sample_data(mag_phy_t6))
 
+# Calculate adonis2 p-value
+mag_pcoa_p <- adonis2(pcoa_mag_res[["dist"]]~RCT,
+                      data = as(sample_data(mag_phy_t6), "data.frame"),
+                      perm = 9999)[["Pr(>F)"]][1]
+# simplify number format
+mag_pcoa_p <- format(mag_pcoa_p, scientific = FALSE)
+
 # Plot
 mag_pcoa <- ggplot(data = pcoa_mag_df,
                    aes(x = Axis.1, y = Axis.2,
                        shape = RCT, fill = RCT)) +
-  geom_point(size = 2) +
+  geom_point(size = 1.5) +
   theme_bw(base_size = 8) +
   coord_fixed() +
   scale_fill_manual(values = RCT_cols, name = "RCT") +
   scale_shape_manual(values = RCT_shapes, name = "RCT") +
   labs(x = paste("Axis1:", round(pcoa_mag_res$pcoa$values$Relative_eig[1]*100), "% variance"),
-       y = paste("Axis2:", round(pcoa_mag_res$pcoa$values$Relative_eig[2]*100), "% variance")) +
+       y = paste("Axis2:", round(pcoa_mag_res$pcoa$values$Relative_eig[2]*100), "% variance"),
+       caption = paste("p (PERMANOVA, RCT) = ", mag_pcoa_p)) +
   theme(panel.grid = element_blank(),
-        legend.box.background = element_rect(color = "black"),
-        plot.title =  element_text(face = "bold", size = 12)) +
-  labs(title = "Digesta, MAGs",
-       caption = paste("p (PERMANOVA, RCT) = ",
-                       signif(adonis2(pcoa_mag_res[["dist"]]~RCT,
-                               data = as(sample_data(mag_phy_t6), "data.frame"),
-                               perm = 9999)[["Pr(>F)"]][1], digits = 2)))
+        legend.box.background = element_rect(color = "black", linewidth = 0.75),
+        panel.border = element_rect(linewidth = 0.75),
+        axis.text = element_text(color = "black"),
+        plot.title =  element_text(face = "bold", size = 12))
 ```
 
 # Fig 2: Panels c-f
@@ -408,17 +420,29 @@ all_pcas_list <- list(
    Liver_metabolomics = mb_liver_pca_res)
 
 # Calculate stats for Rumen Community Types vs all PCs per data type
-pcs_vs_RCT <- sapply(1:length(all_pcas_list), function(x){
+pcs_vs_RCT_full <- lapply(1:length(all_pcas_list), function(x){
   
   df <- as.data.frame(all_pcas_list[[x]][["x"]])
   df$animal <- as.numeric(
     substr(sub("R$", "", sub("T6", "", rownames(df))), start = 2, stop = 3))
   df <- merge(df, sc_meta_full, by = "animal")
     
-  sapply(grep("PC", colnames(df), value = TRUE), function(y)
-    t.test(as.formula(paste(y, "~ RCT")), df)$p.value)
-  })
-names(pcs_vs_RCT) <- names(all_pcas_list)
+  do.call("rbind", lapply(grep("PC", colnames(df), value = TRUE), function(y){
+    tres <- t.test(as.formula(paste(y, "~ RCT")), df)
+    effsize <- cohens_d(df, as.formula(paste(y, "~ RCT")))
+    data.frame(PC = y,
+               t_statistic = tres$statistic,
+               df = tres$parameter, 
+               p = tres$p.value,
+               conf_int_95 = paste(round(tres$conf.int, 2), collapse = ", "),
+               effect_size = effsize$effsize)
+  }))
+})
+names(pcs_vs_RCT_full) <- names(all_pcas_list)
+
+# Simplified results: only p-values
+pcs_vs_RCT <- lapply(pcs_vs_RCT_full, function(x)
+  setNames(x$p, x$PC))
 
 # Any axes with p < 0.1 for split per data type?
 sapply(pcs_vs_RCT, function(x)
@@ -444,6 +468,7 @@ split_pc_vals <- do.call("rbind",
     df$data <- names(split_pcs)[x]
     df$sample_type <- sub("_.*", "", names(split_pcs)[x])
     df$measurement <- capitalize(sub(".*_", "", names(split_pcs)[x]))
+    df$n_samples <- nrow(df)
     df$plot_grouping <- ifelse(df$measurement %in%
                                  c("Metatranscriptomics", "Metaproteomics"),
                                       "Metaomics",
@@ -462,7 +487,9 @@ split_pc_vals$plot_grouping <- factor(split_pc_vals$plot_grouping,
 
 # Set up further variables for plot ordering
 split_pc_vals$sampletype_PC <- paste(split_pc_vals$sample_type,
-                                     split_pc_vals$PC, sep = "\n")
+                                     split_pc_vals$PC,
+                                     paste0("(n = ", split_pc_vals$n_samples, ")"),
+                                     sep = "\n")
 split_pc_vals$sampletype_PC <- factor(split_pc_vals$sampletype_PC,
                                 levels = c(
                                   unique(grep("Digesta", split_pc_vals$sampletype_PC, value = TRUE)),
@@ -470,7 +497,9 @@ split_pc_vals$sampletype_PC <- factor(split_pc_vals$sampletype_PC,
                                   unique(grep("Liver", split_pc_vals$sampletype_PC, value = TRUE))))
 
 split_pc_vals$data_PC <- sub("_", "\n", paste(split_pc_vals$data,
-                                              split_pc_vals$PC, sep = "\n"))
+                                              split_pc_vals$PC,
+                                              paste0("(n = ", split_pc_vals$n_samples, ")"),
+                                              sep = "\n"))
 split_pc_vals$data_PC <- factor(
   split_pc_vals$data_PC,
   levels = c(
@@ -484,23 +513,22 @@ split_pc_vals$data_PC <- factor(
 # Set up p-value stars (and position manually)
 split_pc_vals$pval <- sapply(1:nrow(split_pc_vals), function(x)
   pcs_vs_RCT[[split_pc_vals[x, "data"]]][split_pc_vals[x, "PC"]])
-split_pc_vals$pstar <- stars.pval(split_pc_vals$pval)
+split_pc_vals$p_label <- ifelse(split_pc_vals$pval < 0.0001,
+                                "p < 0.0001",
+                                paste0("p = ", format(
+                                  round(split_pc_vals$pval, digits = 4),
+                                  scientific = FALSE)))
 
 split_pc_pvals <- unique(split_pc_vals[,c("sampletype_PC", "data_PC",
-                                          "pstar", "sample_type",
+                                          "p_label", "sample_type",
                                           "plot_grouping", "measurement")])
 split_pc_pvals <- split_pc_pvals[order(split_pc_pvals$plot_grouping,
                                        split_pc_pvals$measurement),]
-split_pc_pvals$ypos <- c(rep(18, 2),
-                         rep(48, 2),
-                         rep(98, 2),
-                         rep(20, 4))
-split_pc_pvals$ypos_segment <- split_pc_pvals$ypos*0.9
-# Additional adjustments to a few specific dot positions
-split_pc_pvals[split_pc_pvals$data_PC == "Wall\nmetaproteomics\nPC4", "ypos"] <-
-  split_pc_pvals[split_pc_pvals$data_PC == "Wall\nmetaproteomics\nPC4", "ypos"] + 5
-split_pc_pvals[split_pc_pvals$data_PC == "Liver\nproteomics\nPC15", "ypos"] <-
-  split_pc_pvals[split_pc_pvals$data_PC == "Liver\nproteomics\nPC15", "ypos"] - 2
+split_pc_pvals$ypos <- c(rep(20, 2),
+                         rep(50, 2),
+                         rep(100, 2),
+                         rep(21, 4))
+split_pc_pvals$ypos_segment <- split_pc_pvals$ypos*0.85
 
 # Draw box plots for microbial (meta) omics
 pc_boxplots_meta <- lapply(
@@ -520,8 +548,8 @@ pc_boxplots_meta <- lapply(
       annotate(geom = "text",
              x = df_p$sampletype_PC,
              y = df_p$ypos,
-             label = df_p$pstar,
-             size = 4) +
+             label = df_p$p_label,
+             size = 2.25) +
       annotate(geom = "segment",
              x = c(0.75, 1.75), xend = seq(1.25, 2.25),
              y = df_p$ypos_segment) +
@@ -540,26 +568,29 @@ pc_boxplots_meta[[3]] <- pc_boxplots_meta[[3]] +
 pc_boxplots_host <- ggplot(subset(split_pc_vals, plot_grouping == "Host omics"),
                            aes(x = data_PC,
                                y = PC_values, fill = RCT)) +
-      geom_boxplot(outlier.shape = NA, width = 0.4) +
-      scale_fill_manual(values = RCT_cols, name = "RCT") +
-      geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1.25,
-                   position = position_dodge(width = 0.4)) +
-      xlab(NULL) + ylab("PC score") +
+  geom_boxplot(outlier.shape = NA, width = 0.4) +
+  scale_fill_manual(values = RCT_cols, name = "**Panels  \nc-f:**  \n  \nRCT") +
+  geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1.25,
+               position = position_dodge(width = 0.4)) +
+  xlab(NULL) + ylab("PC score") +
   facet_grid(~plot_grouping) +
-      annotate(geom = "text",
-             x = subset(split_pc_pvals, plot_grouping == "Host omics")$data_PC,
-             y = subset(split_pc_pvals, plot_grouping == "Host omics")$ypos,
-             label = subset(split_pc_pvals, plot_grouping == "Host omics")$pstar,
-             size = 4) +
-      annotate(geom = "segment",
-             x = seq(0.85, 3.85, 1),
-             xend = seq(1.15, 4.15, 1),
-             y = 17.5) +
-      theme_classic(base_size = 8) +
+  annotate(geom = "text",
+           x = subset(split_pc_pvals, plot_grouping == "Host omics")$data_PC,
+           y = subset(split_pc_pvals, plot_grouping == "Host omics")$ypos,
+           label = subset(split_pc_pvals, plot_grouping == "Host omics")$p_label,
+           size = 2.25) +
+  annotate(geom = "segment",
+           x = seq(0.85, 3.85, 1),
+           xend = seq(1.15, 4.15, 1),
+           y = 18) +
+  theme_classic(base_size = 8) +
   ggtitle("f") +
-      theme(legend.position = "bottom",
-            legend.box.background = element_rect(color = "black"),
-            plot.title = element_text(face = "bold", size = 12))
+  theme(legend.position = "right",
+        legend.box.background = element_rect(color = "black"),
+        legend.box.margin = margin(5, 5, 5, 5),
+        legend.box.spacing = unit(20, "pt"),
+        legend.title = element_markdown(),
+        plot.title = element_text(face = "bold", size = 12))
 ```
 
 # Fig 2: Panel g
@@ -753,7 +784,7 @@ pc_loadings_tax <- ggplot(dig_pc_loadings_top_trim,
 
 # Combined plot export
 
-```{r fig2, fig.width=7, fig.height=10}
+```{r fig2, fig.width=7.0866, fig.height=8.2677}
 plot_grid(
   plot_grid(
       asv_pcoa + ggtitle("a"),
@@ -764,13 +795,20 @@ plot_grid(
     nrow = 1, align = "h"),
   pc_boxplots_host,
   pc_loadings_tax,
-  ncol = 1, rel_heights = c(1, 0.75, 0.9, 0.85))
+  ncol = 1,
+  rel_heights = c(0.27, 0.22, 0.23, 0.28))
 ```
 
-# Export PCA results for Supplementary table
+# Export PCA results for Supplementary Data 3
 
 ```{r pca_export}
-# Make a list with concatenated sample scores and loadings from selected PCAs
+# Overall PCA / omics RCT comparisons: combine to one table
+pcs_vs_RCT_full <- do.call("rbind", lapply(names(pcs_vs_RCT_full), function(x)
+  data.frame(data = x, pcs_vs_RCT_full[[x]])))
+rownames(pcs_vs_RCT_full) <- NULL
+
+# Two PCAs analyzed in more detail:
+# list with concatenated sample scores and loadings from selected PCAs
 pca_list_concat <- lapply(c("Digesta_metatranscriptomics",
                             "Digesta_metaproteomics"), function(x)
   rbind(all_pcas_list[[x]]$x,
@@ -790,6 +828,7 @@ rownames(dig_pc_loadings_top) <- NULL
 
 # Put all together:
 pca_exports_list <- c(
+  PCA_vs_RCT = list(pcs_vs_RCT_full),
   pca_list_concat,
   pca_tax_details,
   Top_loadings_tax = list(dig_pc_loadings_top)
@@ -904,16 +943,21 @@ dig_pc_loadings_per_tax_trim$db <- factor(dig_pc_loadings_per_tax_trim$db,
 dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$db == "Host", "tax"] <- "Bos taurus"
 
 # Set up italics for taxon labels
-dig_pc_loadings_per_tax_trim$tax_label <- sapply(
-  as.character(dig_pc_loadings_per_tax_trim$tax), function(x)
-    ifelse(
-      (x %in% grep("[0-9]", levels(dig_pc_loadings_per_tax_trim$tax), value = TRUE) | x == "other"),
-         x,
-         paste0("*", x, "*")))
+dig_pc_loadings_per_tax_trim$tax_label <- factor(dig_pc_loadings_per_tax_trim$tax)
+levels(dig_pc_loadings_per_tax_trim$tax_label) <- ifelse(grepl("[1-9]",
+                                                         levels(dig_pc_loadings_per_tax_trim$tax_label)),
+                                                   levels(dig_pc_loadings_per_tax_trim$tax_label),
+                                                   paste0("*",
+                                                          levels(dig_pc_loadings_per_tax_trim$tax_label),
+                                                          "*"))
+ 
 # Manual fix for one special case ("Isotricha sp YL-2021a")
-dig_pc_loadings_per_tax_trim[dig_pc_loadings_per_tax_trim$tax_label == "Isotricha sp YL-2021a",
-                         "tax_label"] <- "*Isotricha* sp. YL-2021a"
-
+levels(dig_pc_loadings_per_tax_trim$tax_label)[
+  grep("Isotricha sp.", levels(dig_pc_loadings_per_tax_trim$tax_label))] <- sub(
+    "Isotricha", "*Isotricha*",
+    levels(dig_pc_loadings_per_tax_trim$tax_label)[
+      grep("Isotricha sp.", levels(dig_pc_loadings_per_tax_trim$tax_label))])
+  
 # Order taxon labels by total contribution across everything
 top_contrib_order <- aggregate(load_contrib ~ tax_label,
                                dig_pc_loadings_per_tax_trim,
@@ -939,7 +983,7 @@ contribs_p_genus <- ggplot(dig_pc_loadings_per_tax_trim,
         strip.background = element_rect(fill = "white"))
 ```
 
-```{r pca_ext_fig, fig.width=7, fig.height=9}
+```{r pca_supplement_fig, fig.width=7, fig.height=9}
 plot_grid(contribs_p_domain + ggtitle("a"),
           contribs_p_genus + ggtitle("b"),
           ncol = 1, rel_heights = c(0.2, 0.8),
