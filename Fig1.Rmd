@@ -102,22 +102,3 @@ breed_tbl_both_gt
 # export as docx
 gt::gtsave(breed_tbl_both_gt, filename = "../results/tables/supacow_tbl1.docx")
 ```
-
-
-```{r rev_ch4_stats}
-# temp extra plot for revisions: methane in all vs chosen 24
-ggplot(rbind(
-    data.frame(sc_meta_full,
-               data = "all"),
-    data.frame(subset(sc_meta_full, chosen_24 == TRUE),
-               data = "chosen_24")), aes(x = data, y = ch4_g_kg_dmi)) +
-    geom_boxplot(alpha = 0.5, outlier.shape = NA) +
-        geom_dotplot(binaxis = "y", stackdir = "center",
-                     fill = "gray70", alpha = 0.8) +
-    stat_summary(fun = "median", colour = "black", size = 4,
-                 stroke = 1.5, geom = "point", shape = 4) +
-    theme_classic(base_size = 12) +
-    theme(legend.position = "none",
-          plot.title = element_text(face = "bold", size = 12))
-```
-

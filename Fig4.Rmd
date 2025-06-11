@@ -1,5 +1,5 @@
 ---
-title: "| Fig4 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Fig 4 and Supplementary Data 5a-d for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -36,7 +36,7 @@ library("ggtext")
 source("fig_functions.R")
 ```
 
-This script uses the PCA results from `Fig2.Rmd` for selecting taxa of interest, so that must have been run before executing this file (those results are also available as a supplementary table in the manuscript).
+This script uses the PCA results from `Fig2.Rmd` for selecting taxa of interest, so that must have been run before executing this file (those results are also available as Supplementary Data 3f in the manuscript).
 
 # Panels a & b
 

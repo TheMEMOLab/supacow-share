@@ -1,5 +1,5 @@
 ---
-title: "| Fig3 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Fig 3 & Supplementary Data 4a-d for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -28,6 +28,7 @@ library("ggpubr")
 library("phyloseq")
 library("DESeq2")
 library("openxlsx")
+library("ggtext")
 
 # Custom generic functions
 source("fig_functions.R")
@@ -447,7 +448,7 @@ hm_sags <- ggplot(cil_sp_omic_summary,
         legend.position = "none")
 ```
 
-# Panels b & c
+# Panels c & d
 
 ## c. MetaT
 
@@ -570,13 +571,14 @@ cil_abund_mp <- ggplot(cil_mp_summary,
   geom_point(aes(x = Median_per_M), shape = 23, size = 1,
              position = position_dodge(width = 0.5)) +
   scale_fill_manual(values = RCT_cols,
-                    name = "RCT",
+                    name = "**Panels c-d:** RCT",
                     labels = c("A", "B")) +
   ylab(NULL) + xlab("Metaproteomic abundance\n(sum intensity/1,000,000)") +
   theme_classic(base_size = 9) +
-  theme(legend.position = "bottom",
+  theme(plot.title = element_text(face = "bold", size = 12),
+        legend.position = "bottom",
         legend.box.background = element_rect(color = "black"),
-        plot.title = element_text(face = "bold", size = 12),
+        legend.title = element_markdown(size = 8),
         legend.justification = 0.9,
         legend.box.spacing = unit(4, "mm"),
         legend.margin = margin(2, 2, 2, 2),

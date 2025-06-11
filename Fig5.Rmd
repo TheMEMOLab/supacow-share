@@ -1,5 +1,5 @@
 ---
-title: "| Fig 5 (MAPP panel) for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Fig 5 (MAPP inset) & Supplementary Data 5e for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -26,6 +26,7 @@ library("reshape2")
 library("ggpubr")
 library("matrixStats")
 library("Hmisc")
+library("openxlsx")
 
 # Custom generic functions
 source("fig_functions.R")
@@ -115,4 +116,18 @@ ggplot(mapp_summary, aes(y = specificity, fill = RCT)) +
         legend.box.background = element_rect(color = "black"),
         axis.text.y = element_text(size = 9),
         panel.grid.major.y = element_line(color = "gray90"))
+```
+
+```{r mapp_stats_export}
+# Add probe details to full results table
+mapp_df_t6_naoh_p$probe <- mapp_df_t6_naoh_p$feature
+mapp_df_t6_naoh_p <- merge(mapp_df_t6_naoh_p,
+                           mapp_probes[,c("probe", "specificity")],
+                           by = "probe")
+
+# Export detailed statistics
+write.xlsx(mapp_df_t6_naoh_p[,c("probe", "specificity",
+                                "W_statistic", "p", "padj", "gr1_median", "gr2_median",
+                                "up_in")],
+           "../results/supp_tables/mapp_stats.xlsx")
 ```
