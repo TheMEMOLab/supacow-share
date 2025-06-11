@@ -1,5 +1,5 @@
 ---
-title: "| Extended Data Fig 8 + 9 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Supplementary Figs 8-9 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -31,7 +31,7 @@ library("RColorBrewer")
 source("fig_functions.R")
 ```
 
-This script builds on WGCNA results of metaproteomic data from the [holodoublevu](https://github.com/cmkobel/holodoublevu/) workflow.
+This script builds on WGCNA results of metaproteomic data from the [holodoublevu](https://github.com/cmkobel/holodoublevu/) workflow, which are available in the processed data sharing archive for the study. 
 
 ```{r hm_functions}
 # Custom functions for plotting
@@ -109,7 +109,7 @@ sc_meta_full <- read.table("../data/sample_data/metadata_v1.7.tsv",
                            sep = "\t", header = TRUE, stringsAsFactors = TRUE)
 ```
 
-# Extended Data Fig 5: WGCNA: Digesta modules
+# WGCNA: Digesta modules
 
 ```{r wgcna_RCT_modules}
 # Import data with module~phenotype significance
@@ -336,7 +336,7 @@ ComplexHeatmap::draw(dig_ht_list,
                      ht_gap = unit(2, "mm"))
 ```
 
-# Extended Data Fig 6: WGCNA: Wall and digesta modules
+# WGCNA: Wall and digesta modules
 
 ## Correlations between wall and digesta modules
 

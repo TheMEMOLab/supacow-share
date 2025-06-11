@@ -1,5 +1,5 @@
 ---
-title: "| Extended Data Fig 5 + 6 for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
+title: "| Supplementary Figs 5-6 and Supplementary Data 4e-f for Kobel *et al.*: Protozoal populations drive system-wide variation in the rumen microbiome\n"
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -47,7 +47,7 @@ rownames(sc_meta_24_T6) <- paste0("D",
                                          paste0("0", sc_meta_24_T6$animal)), "T6")
 ```
 
-This script builds on results exported from `Fig2.Rmd` (PCAs) and `Fig3.Rmd` (differential abundance), so those must have been run before executing this file (alternatively, the results are also available as supplementary tables in the manuscript).
+This script builds on results exported from `Fig2.Rmd` (PCAs) and `Fig3.Rmd` (differential abundance), so those must have been run before executing this file (alternatively, the results are also available as supplementary data in the manuscript).
 
 # SFig 6
 
@@ -438,6 +438,14 @@ tax_cor_hm_list <- mt_cor_hm %v% mp_cor_hm
 
 ComplexHeatmap::draw(tax_cor_hm_list,
                      ht_gap = unit(3, "mm"))
+```
+
+```{r corr_export}
+# Export full correlation results
+
+write.xlsx(list(metaT = tax_cors_mt_df,
+                metaP = tax_cors_mp_df),
+           "../results/supp_tables/tax_corr_res.xlsx")
 ```
 
 # SFig 5

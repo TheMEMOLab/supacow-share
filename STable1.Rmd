@@ -1,5 +1,5 @@
 ---
-title: 'SuPA[cow]: Supplementary Table 1: Summary of omic layers'
+title: 'SuPA[cow]: Supplementary Data 1b: Summary of omic layers'
 author: "VTEA"
 date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
@@ -37,7 +37,7 @@ summarize_features <- function(dfs, dig = 1){
 }
 ```
 
-# Supplementary Table 1: Summaries of features per data type
+# Summaries of features per data type
 
 ## ASVs
 
