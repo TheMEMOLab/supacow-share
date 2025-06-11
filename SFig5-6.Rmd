@@ -531,8 +531,8 @@ mt_cil_ts <- ggplot(mt_cil_sel_df, aes(y = value, x = timepoint,
   scale_shape_manual(values = RCT_shapes) +
   theme_classic(base_size = 6) +
   guides(shape = guide_legend(ncol = 1)) +
-  ggtitle("A. Metatranscriptomics") +
-  ylab("expression (VST-transformed)") +
+  ggtitle("a") +
+  ylab("Metatranscriptomics:\nVST-transformed counts") +
   theme(plot.title = element_text(face = "bold", size = 8),
         strip.text.x = element_text(face = "italic"),
         legend.position = "bottom")
@@ -596,8 +596,8 @@ mp_cil_ts <- ggplot(cil_sp_sel_mp_df, aes(y = value, x = timepoint,
   scale_shape_manual(values = RCT_shapes) +
   theme_classic(base_size = 6) +
   guides(shape = guide_legend(ncol = 1)) +
-  ggtitle("B. Metaproteomics") +
-  ylab("Sum of intensities") +
+  ggtitle("b") +
+  ylab("Metaproteomics:\nSum of LFQ intensities") +
   theme(plot.title = element_text(face = "bold", size = 8),
         strip.text.x = element_text(face = "italic"),
         legend.position = "bottom")
