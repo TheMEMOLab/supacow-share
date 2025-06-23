@@ -274,11 +274,11 @@ bdiv_comp <- function(phylo_obj, vars){
     count_df <-  as.data.frame(t(as(otu_table(phylo_obj), "matrix")))
     count_df <- count_df[rownames(meta_df),]
     
-    dist <- vegdist(count_df, method = "bray")
+    dist <- vegdist(count_df, method = "robust.aitchison")
     
     unlist(adonis2(as.formula(paste("dist ~", x)),
                        data = meta_df,
-                       perm = 9999)[x,])
+                       perm = 9999)["Model",])
     })
   
   as.data.frame(t(ad_res))
@@ -319,7 +319,7 @@ asv_t6_bdiv_res <- rbind(
 # Put together plots
 bdiv_plots <- lapply(
   c("treatment", "breed", "ch4_dmi_binary",
-    "weight_category", "slaughter_group", "delivery_batch"), function(x)
+    "weight_category", "slaughter_group", "pen"), function(x)
       ggplot(data = asv_phy_t6_pcoa_df,
              aes(x = Axis.1, y = Axis.2,
                  fill = !!sym(x), shape = !!sym(x))) +
